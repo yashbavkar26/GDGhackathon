@@ -1,115 +1,151 @@
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { AdminLayout } from "@/components/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MapPin, Bug, AlertTriangle, Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { GoogleMap, useJsApiLoader, Marker, InfoWindow } from "@react-google-maps/api";
 
-const regions = [
-  { name: "Punjab", lat: 31, lng: 75, outbreaks: 12, risk: "High", pests: ["Stem Borer", "Leaf Folder"], color: "bg-destructive" },
-  { name: "Gujarat", lat: 22, lng: 72, outbreaks: 8, risk: "Medium", pests: ["Bollworm", "Whitefly"], color: "bg-warning" },
-  { name: "Haryana", lat: 29, lng: 76, outbreaks: 5, risk: "Medium", pests: ["Aphids", "Rust"], color: "bg-warning" },
-  { name: "UP", lat: 27, lng: 80, outbreaks: 15, risk: "Critical", pests: ["Red Rot", "Top Borer"], color: "bg-destructive" },
-  { name: "Maharashtra", lat: 19, lng: 76, outbreaks: 6, risk: "Low", pests: ["Pod Borer"], color: "bg-success" },
-  { name: "Karnataka", lat: 15, lng: 76, outbreaks: 3, risk: "Low", pests: ["Mealybug"], color: "bg-success" },
-  { name: "MP", lat: 23, lng: 78, outbreaks: 9, risk: "Medium", pests: ["Termites", "Shoot Fly"], color: "bg-warning" },
-  { name: "Rajasthan", lat: 26, lng: 74, outbreaks: 4, risk: "Low", pests: ["Locust"], color: "bg-success" },
-];
-
-const riskColor: Record<string, string> = {
-  Low: "bg-success/15 text-success",
-  Medium: "bg-warning/15 text-warning",
-  High: "bg-destructive/15 text-destructive",
-  Critical: "bg-destructive text-destructive-foreground",
+const containerStyle = {
+  width: "100%",
+  height: "480px",
+  borderRadius: "12px",
 };
 
+const defaultCenter = { lat: 20.5937, lng: 78.9629 }; // Center of India
+
 export default function PestHeatmap() {
+  const [scans, setScans] = useState<any[]>([]);
+  const [selectedScan, setSelectedScan] = useState<any | null>(null);
+
+  const { isLoaded } = useJsApiLoader({
+    id: "google-map-script",
+    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "[GCP_API_KEY]",
+  });
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("cropguard_scans");
+      if (saved) {
+        setScans(JSON.parse(saved));
+      }
+    } catch (e) {
+      console.warn("Could not load scan history.");
+    }
+  }, []);
+
+  const parseLocation = (locStr: string) => {
+    if (!locStr || locStr === "Unknown Location Data") return null;
+    const parts = locStr.split(", ");
+    if (parts.length === 2) {
+      return { lat: parseFloat(parts[0]), lng: parseFloat(parts[1]) };
+    }
+    return null;
+  };
+
+  const getRiskColor = (severity: string) => {
+    switch (severity) {
+      case "Low": return "text-success bg-success/10";
+      case "Medium": return "text-warning bg-warning/10";
+      case "High": return "text-destructive bg-destructive/10";
+      default: return "text-destructive bg-destructive/10";
+    }
+  };
+
   return (
     <AdminLayout>
       <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-            <h1 className="text-2xl font-display font-bold">Pest Outbreak Heatmap</h1>
-            <p className="text-sm text-muted-foreground mt-1">Crowd-sourced pest reports mapped region-wise for spread prediction</p>
+            <h1 className="text-2xl font-display font-bold">Pest Outbreak Map</h1>
+            <p className="text-sm text-muted-foreground mt-1">Live locations sourced directly from recent AI diagnoses</p>
           </motion.div>
           <Button variant="outline" className="gap-2"><Filter className="h-4 w-4" />Filter</Button>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <Card className="lg:col-span-2">
-            <CardHeader>
+          <Card className="lg:col-span-2 shadow-lg border-primary/10 overflow-hidden backdrop-blur-sm bg-background/80">
+            <CardHeader className="bg-muted/30 border-b border-border/50">
               <CardTitle className="text-base font-display flex items-center gap-2">
-                <MapPin className="h-4 w-4 text-primary" /> India — Regional Outbreak Map
+                <MapPin className="h-4 w-4 text-primary" /> Live Outbreak Hotspots (Google Maps)
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              {/* Simplified visual map */}
-              <div className="relative bg-accent/30 rounded-xl h-[480px] overflow-hidden">
-                <svg viewBox="0 0 400 500" className="w-full h-full opacity-20">
-                  <path d="M200 50 Q300 80 320 180 Q340 280 300 350 Q260 420 200 460 Q140 420 100 350 Q60 280 80 180 Q100 80 200 50Z" fill="hsl(145,63%,32%)" stroke="hsl(145,63%,25%)" strokeWidth="2" />
-                </svg>
-                {regions.map((r, i) => {
-                  const x = 20 + ((r.lng - 68) / 30) * 60;
-                  const y = 10 + ((35 - r.lat) / 25) * 80;
-                  return (
-                    <motion.div
-                      key={r.name}
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1 }}
-                      transition={{ delay: i * 0.1 }}
-                      className="absolute"
-                      style={{ left: `${x}%`, top: `${y}%`, transform: "translate(-50%, -50%)" }}
+            <CardContent className="p-0">
+              {isLoaded ? (
+                <GoogleMap
+                  mapContainerStyle={containerStyle}
+                  center={scans.length > 0 && parseLocation(scans[0].location) ? parseLocation(scans[0].location)! : defaultCenter}
+                  zoom={scans.length > 0 ? 6 : 4}
+                  options={{ styles: [{ featureType: "all", elementType: "labels.text.fill", stylers: [{ color: "#ffffff" }] }, { featureType: "landscape", stylers: [{ color: "#1e293b" }] }, { featureType: "water", stylers: [{ color: "#0f172a" }] }] }}
+                >
+                  {scans.map((scan) => {
+                    const pos = parseLocation(scan.location);
+                    if (!pos) return null;
+                    return (
+                      <Marker
+                        key={scan.id}
+                        position={pos}
+                        onClick={() => setSelectedScan(scan)}
+                      />
+                    );
+                  })}
+
+                  {selectedScan && parseLocation(selectedScan.location) && (
+                    <InfoWindow
+                      position={parseLocation(selectedScan.location)!}
+                      onCloseClick={() => setSelectedScan(null)}
                     >
-                      <div className="relative group cursor-pointer">
-                        <div className={`w-8 h-8 rounded-full ${r.color} opacity-30 animate-pulse-glow absolute -inset-2`} />
-                        <div className={`w-4 h-4 rounded-full ${r.color} relative z-10 ring-2 ring-card`} />
-                        <div className="absolute left-6 top-1/2 -translate-y-1/2 bg-card border border-border rounded-lg px-3 py-2 shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-20 whitespace-nowrap pointer-events-none">
-                          <p className="text-xs font-bold">{r.name}</p>
-                          <p className="text-[10px] text-muted-foreground">{r.outbreaks} outbreaks · {r.risk} risk</p>
-                        </div>
+                      <div className="p-1 max-w-[200px] text-black">
+                        <img src={selectedScan.image} className="w-full h-24 object-cover rounded mb-2" alt="Crop" />
+                        <p className="font-bold text-sm">{selectedScan.disease || "Unknown"}</p>
+                        <p className="text-xs text-gray-700">Crop: {selectedScan.crop}</p>
+                        <p className="text-[10px] text-gray-500">{selectedScan.timestamp}</p>
                       </div>
-                    </motion.div>
-                  );
-                })}
-              </div>
-              <div className="flex gap-4 mt-4 justify-center">
-                {["Low", "Medium", "High", "Critical"].map((level) => (
-                  <span key={level} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <span className={`w-3 h-3 rounded-full ${level === "Low" ? "bg-success" : level === "Medium" ? "bg-warning" : "bg-destructive"}`} />
-                    {level}
-                  </span>
-                ))}
-              </div>
+                    </InfoWindow>
+                  )}
+                </GoogleMap>
+              ) : (
+                <div className="h-[480px] w-full flex items-center justify-center bg-muted/20">
+                  <p className="text-muted-foreground flex items-center"><MapPin className="mr-2 animate-bounce" /> Loading Google Maps...</p>
+                </div>
+              )}
             </CardContent>
           </Card>
 
           <div className="space-y-4">
-            <Card>
-              <CardHeader>
+            <Card className="shadow-lg border-primary/10 backdrop-blur-sm bg-background/80">
+              <CardHeader className="bg-muted/30 border-b border-border/50">
                 <CardTitle className="text-base font-display flex items-center gap-2">
-                  <Bug className="h-4 w-4 text-destructive" /> Active Outbreaks
+                  <Bug className="h-4 w-4 text-destructive" /> Scanned Outbreaks
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3 max-h-[400px] overflow-y-auto">
-                {regions.sort((a, b) => b.outbreaks - a.outbreaks).map((r) => (
-                  <div key={r.name} className="p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-medium text-sm">{r.name}</span>
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${riskColor[r.risk]}`}>{r.risk}</span>
+              <CardContent className="p-4 space-y-3 max-h-[400px] overflow-y-auto">
+                {scans.length === 0 ? (
+                  <p className="text-sm text-muted-foreground p-4 text-center border-dashed border-2 rounded">No live scans available. Upload an image in the Detection tab to log a hotspot.</p>
+                ) : (
+                  scans.map((r, i) => (
+                    <div key={r.id + i} className="p-3 rounded-lg bg-muted/30 border hover:bg-muted/50 transition-colors">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-semibold text-sm truncate pr-2" title={r.disease}>{r.disease || "Unknown"}</span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${getRiskColor(r.severity)}`}>
+                          {r.severity || "Medium"}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground flex justify-between mt-1">
+                        <span>{r.crop}</span>
+                        <span>{r.location !== "Unknown Location Data" ? r.location : "No GPS"}</span>
+                      </p>
                     </div>
-                    <p className="text-xs text-muted-foreground">{r.outbreaks} outbreaks · {r.pests.join(", ")}</p>
-                    <div className="mt-2 h-1.5 bg-border rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full ${r.color}`} style={{ width: `${(r.outbreaks / 15) * 100}%` }} />
-                    </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </CardContent>
             </Card>
 
-            <Card className="gradient-hero text-primary-foreground">
+            <Card className="gradient-hero text-primary-foreground shadow-lg border-0">
               <CardContent className="p-5">
-                <AlertTriangle className="h-5 w-5 mb-2" />
-                <p className="font-display font-bold text-sm">Spread Alert</p>
-                <p className="text-xs mt-1 opacity-80">UP region shows 40% increase in Red Rot cases. Predicted to spread to neighboring Bihar within 2 weeks.</p>
+                <AlertTriangle className="h-5 w-5 mb-2 text-white" />
+                <p className="font-display font-bold text-sm text-white drop-shadow">Active Spread Alert</p>
+                <p className="text-xs mt-1 text-white/90 drop-shadow">Based on latest real-time scans, there's a localized cluster of reports in your mapped area. Consider preventive cross-regional isolations.</p>
               </CardContent>
             </Card>
           </div>

@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BarChart3, Download, Calendar, TrendingUp, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import { useState, useEffect } from "react";
 
 const monthlyData = [
   { month: "Jan", rice: 45, wheat: 30, cotton: 20 },
@@ -21,22 +22,40 @@ const severityPie = [
   { name: "Critical", value: 7, color: "hsl(0,72%,35%)" },
 ];
 
-const recentReports = [
+const staticReports = [
   { id: "RPT-2026-0412", region: "Punjab", date: "Apr 3, 2026", type: "Outbreak Summary", status: "Complete" },
   { id: "RPT-2026-0411", region: "Gujarat", date: "Apr 2, 2026", type: "Treatment Efficacy", status: "Complete" },
-  { id: "RPT-2026-0410", region: "UP", date: "Apr 1, 2026", type: "Risk Assessment", status: "Pending" },
-  { id: "RPT-2026-0409", region: "Maharashtra", date: "Mar 30, 2026", type: "Seasonal Forecast", status: "Complete" },
-  { id: "RPT-2026-0408", region: "Haryana", date: "Mar 28, 2026", type: "Outbreak Summary", status: "Complete" },
 ];
 
 export default function Reports() {
+  const [liveReports, setLiveReports] = useState<any[]>([]);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("cropguard_scans");
+      if (saved) {
+        const scans = JSON.parse(saved);
+        setLiveReports(scans.map((s: any) => ({
+          id: `SCAN-${s.id.toString().slice(-4)}`,
+          region: s.location !== "Unknown Location Data" ? "Local Scan" : "Unknown",
+          date: s.timestamp.split(', ')[1] || s.timestamp,
+          type: `${s.crop} Analysis`,
+          status: "Live Data",
+          isLive: true
+        })));
+      }
+    } catch (e) { }
+  }, []);
+
+  const allReports = [...liveReports, ...staticReports];
+
   return (
     <AdminLayout>
       <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             <h1 className="text-2xl font-display font-bold">Reports & Analytics</h1>
-            <p className="text-sm text-muted-foreground mt-1">Comprehensive disease and pest management reports</p>
+            <p className="text-sm text-muted-foreground mt-1">Comprehensive disease and pest management reports with live updates</p>
           </motion.div>
           <Button className="gradient-hero text-primary-foreground border-0 gap-2">
             <Download className="h-4 w-4" /> Export Report
@@ -92,7 +111,7 @@ export default function Reports() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base font-display flex items-center gap-2">
-              <FileText className="h-4 w-4 text-primary" /> Recent Reports
+              <FileText className="h-4 w-4 text-primary" /> Recent Logged Scans & Reports
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -100,7 +119,7 @@ export default function Reports() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border">
-                    <th className="text-left py-3 px-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Report ID</th>
+                    <th className="text-left py-3 px-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">ID</th>
                     <th className="text-left py-3 px-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Region</th>
                     <th className="text-left py-3 px-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Date</th>
                     <th className="text-left py-3 px-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Type</th>
@@ -109,14 +128,14 @@ export default function Reports() {
                   </tr>
                 </thead>
                 <tbody>
-                  {recentReports.map((r) => (
-                    <tr key={r.id} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
+                  {allReports.map((r, index) => (
+                    <tr key={index} className={`border-b border-border/50 hover:bg-muted/30 transition-colors ${(r as any).isLive ? 'bg-primary/5' : ''}`}>
                       <td className="py-3 px-2 font-mono text-xs">{r.id}</td>
                       <td className="py-3 px-2">{r.region}</td>
                       <td className="py-3 px-2 text-muted-foreground">{r.date}</td>
                       <td className="py-3 px-2">{r.type}</td>
                       <td className="py-3 px-2">
-                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${r.status === "Complete" ? "bg-success/15 text-success" : "bg-warning/15 text-warning"}`}>
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${r.status === "Live Data" ? "bg-primary/20 text-primary" : "bg-success/15 text-success"}`}>
                           {r.status}
                         </span>
                       </td>

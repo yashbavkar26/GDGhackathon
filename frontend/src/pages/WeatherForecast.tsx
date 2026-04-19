@@ -3,6 +3,7 @@ import { AdminLayout } from "@/components/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Cloud, Droplets, Wind, Thermometer, Sun, AlertTriangle, Eye } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
+import { useState, useEffect } from "react";
 
 const weekForecast = [
   { day: "Mon", temp: 32, humidity: 65, rain: 0, risk: 25 },
@@ -29,13 +30,26 @@ const impactColor: Record<string, string> = {
 
 export default function WeatherForecast() {
   const todayData = weekForecast[0];
+  const [latestCrop, setLatestCrop] = useState<string | null>(null);
+  
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("cropguard_scans");
+      if (saved) {
+        const scans = JSON.parse(saved);
+        if (scans && scans.length > 0) {
+          setLatestCrop(scans[0].crop);
+        }
+      }
+    } catch (e) { }
+  }, []);
 
   return (
     <AdminLayout>
       <div className="p-6 space-y-6">
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
           <h1 className="text-2xl font-display font-bold">Weather-Linked Forecasting</h1>
-          <p className="text-sm text-muted-foreground mt-1">Predict pest & disease conditions based on weather patterns</p>
+          <p className="text-sm text-muted-foreground mt-1">Predict pest & disease conditions based on weather patterns {latestCrop && `for your recent ${latestCrop} scans`}</p>
         </motion.div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -81,7 +95,7 @@ export default function WeatherForecast() {
                 <p className="text-xs font-semibold text-warning flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3" /> Peak risk on Friday (85%)
                 </p>
-                <p className="text-xs text-muted-foreground mt-1">High humidity + rain creates optimal conditions for Leaf Blight outbreak</p>
+                <p className="text-xs text-muted-foreground mt-1">High humidity + rain creates optimal conditions for {latestCrop ? `${latestCrop} disease` : "Leaf Blight"} outbreak</p>
               </div>
             </CardContent>
           </Card>
