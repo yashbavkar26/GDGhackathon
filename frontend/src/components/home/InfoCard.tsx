@@ -8,7 +8,7 @@ const InfoCard = () => {
       initial={{ opacity: 0, x: 50 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.8, delay: 1, type: "spring", stiffness: 100 }}
-      className="absolute right-8 top-1/2 -translate-y-1/2 w-72 rounded-2xl bg-black/40 backdrop-blur-xl border border-white/10 p-6 overflow-hidden hidden lg:block"
+      className="absolute right-0 xl:right-4 top-1/2 -translate-y-1/2 w-72 rounded-2xl bg-black/40 backdrop-blur-xl border border-white/10 p-6 overflow-hidden hidden lg:block"
       whileHover={{ y: -5, boxShadow: "0 20px 40px -15px rgba(16, 185, 129, 0.2)" }}
     >
       {/* Decorative gradient blur */}

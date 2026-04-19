@@ -21,7 +21,7 @@ const Index = () => {
 
       <main className="relative h-screen flex flex-col justify-center px-8 md:px-16 lg:px-24">
         {/* 3D Background - Takes up full absolute space but rendered behind text */}
-        <div className="absolute top-0 right-0 w-full lg:w-3/4 h-full z-0">
+        <div className="absolute inset-0 w-full h-full z-0 overflow-hidden">
           <Suspense fallback={<Loader />}>
             <Hero3D />
           </Suspense>
