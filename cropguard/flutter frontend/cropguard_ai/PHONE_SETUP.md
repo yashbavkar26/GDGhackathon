@@ -15,7 +15,7 @@ The app uses Google Maps for the heatmap feature. You need to add your Google Ma
 
 **Example:**
 ```xml
-<string name="google_maps_api_key">AIzaSyD1234567890XXXXXXXXXXXXXXXX</string>
+<string name="google_maps_api_key">YOUR_GOOGLE_MAPS_API_KEY</string>
 ```
 
 ### 2. **App Name** ✅ (Already updated)

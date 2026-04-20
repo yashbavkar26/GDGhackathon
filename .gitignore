@@ -1,0 +1,20 @@
+# Temporary files and folders
+tmp/
+temp/
+**/tmp/
+**/temp/
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+.env.master
+
+# Dependencies and generated assets
+**/node_modules/
+**/dist/
+**/build/
+**/.cache/
+
+# Editor/project noise
+.vscode/

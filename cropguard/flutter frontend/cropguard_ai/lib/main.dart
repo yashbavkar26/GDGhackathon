@@ -3,12 +3,76 @@ import 'package:image_picker/image_picker.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'dart:io';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.light);
 final ValueNotifier<String> languageNotifier = ValueNotifier('English');
+
+class CropAlertNotificationService {
+  static final FlutterLocalNotificationsPlugin _plugin =
+      FlutterLocalNotificationsPlugin();
+  static bool _initialized = false;
+
+  static Future<void> _ensureInitialized() async {
+    if (_initialized) return;
+
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
+    const iosSettings = DarwinInitializationSettings();
+
+    const settings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
+
+    await _plugin.initialize(settings);
+
+    try {
+      await Permission.notification.request();
+    } catch (_) {
+      // Ignore unsupported platforms.
+    }
+
+    _initialized = true;
+  }
+
+  static Future<void> showPostAnalysisDummyAlert(Disease disease) async {
+    await _ensureInitialized();
+
+    const androidDetails = AndroidNotificationDetails(
+      'cropguard_dummy_alerts',
+      'CropGuard Alerts',
+      channelDescription: 'Dummy crop alerts shown after AI analysis',
+      importance: Importance.max,
+      priority: Priority.high,
+    );
+
+    const details = NotificationDetails(
+      android: androidDetails,
+      iOS: DarwinNotificationDetails(),
+    );
+
+    final title = 'Crop Alert Demo: ${disease.name}';
+    final body =
+        'Analysis complete. Severity ${disease.severity.toUpperCase()}, '
+        'spread risk ${disease.spreadRisk}.';
+
+    await _plugin.show(
+      DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      title,
+      body,
+      details,
+    );
+  }
+}
 
 void main() {
   runApp(const MyApp());
@@ -582,11 +646,157 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
+  static const String _ollamaBaseUrl = 'http://10.140.93.83:11434';
+  static const String _ollamaModel = 'gemma4';
+  static const String _dashboardSqlApiBaseUrl = 'http://10.140.93.83:5050';
+
   int _selectedIndex = 0;
 
   final List<LocationData> _data = [];
 
   final List<String> _messages = [];
+  final List<ScanHistoryItem> _scanHistory = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPersistedScanResults();
+  }
+
+  Future<void> _loadPersistedScanResults() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_dashboardSqlApiBaseUrl/api/results'),
+      ).timeout(const Duration(seconds: 2));
+
+      if (response.statusCode != 200) return;
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) return;
+      final items = decoded['items'];
+      if (items is! List) return;
+
+      final loadedHistory = items
+          .whereType<Map<String, dynamic>>()
+          .map(_scanHistoryItemFromJson)
+          .toList();
+
+      if (!mounted) return;
+      setState(() {
+        _scanHistory
+          ..clear()
+          ..addAll(loadedHistory);
+        _data
+          ..clear()
+          ..addAll(
+            loadedHistory.map(
+              (entry) => LocationData(
+                entry.lat,
+                entry.lng,
+                entry.locationLabel,
+                entry.disease,
+              ),
+            ),
+          );
+      });
+    } catch (_) {
+      // Keep app functional if SQL API is offline.
+    }
+  }
+
+  Future<void> _persistScanResultToSql(ScanHistoryItem item) async {
+    final payload = {
+      'imagePath': item.imagePath,
+      'disease': item.disease,
+      'severity': item.severity,
+      'confidence': item.confidence,
+      'locationLabel': item.locationLabel,
+      'lat': item.lat,
+      'lng': item.lng,
+      'timestamp': item.timestamp.toIso8601String(),
+      'diseaseDetails': {
+        'name': item.diseaseDetails.name,
+        'treatment': item.diseaseDetails.treatment,
+        'chemical': item.diseaseDetails.chemical,
+        'dosage': item.diseaseDetails.dosage,
+        'timing': item.diseaseDetails.timing,
+        'confidence': item.diseaseDetails.confidence,
+        'severity': item.diseaseDetails.severity,
+        'prevention': item.diseaseDetails.prevention,
+        'spreadRisk': item.diseaseDetails.spreadRisk,
+        'symptoms': item.diseaseDetails.symptoms,
+        'nextSteps': item.diseaseDetails.nextSteps,
+      },
+    };
+
+    try {
+      await http.post(
+        Uri.parse('$_dashboardSqlApiBaseUrl/api/results'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      ).timeout(const Duration(seconds: 2));
+    } catch (_) {
+      // Non-blocking persistence for demo flow.
+    }
+  }
+
+  static double _toDouble(dynamic value, {double fallback = 0.0}) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? fallback;
+    return fallback;
+  }
+
+  static List<String> _toStringList(dynamic value) {
+    if (value is List) {
+      return value.map((e) => e.toString()).toList();
+    }
+    return [];
+  }
+
+  ScanHistoryItem _scanHistoryItemFromJson(Map<String, dynamic> json) {
+    final diseaseMap =
+        (json['diseaseDetails'] as Map?)?.cast<String, dynamic>() ??
+        <String, dynamic>{};
+
+    final disease = Disease(
+      name:
+          diseaseMap['name']?.toString() ??
+          json['disease']?.toString() ??
+          'Unknown Disease',
+      treatment:
+          diseaseMap['treatment']?.toString() ?? 'No treatment specified',
+      chemical: diseaseMap['chemical']?.toString() ?? 'No chemical specified',
+      dosage: diseaseMap['dosage']?.toString() ?? 'No dosage specified',
+      timing: diseaseMap['timing']?.toString() ?? 'No timing specified',
+      confidence: _toDouble(
+        diseaseMap['confidence'],
+        fallback: _toDouble(json['confidence']),
+      ),
+      severity:
+          diseaseMap['severity']?.toString() ??
+          json['severity']?.toString() ??
+          'Unknown',
+      prevention:
+          diseaseMap['prevention']?.toString() ?? 'No prevention specified',
+      spreadRisk: diseaseMap['spreadRisk']?.toString() ?? 'Unknown',
+      symptoms: _toStringList(diseaseMap['symptoms']),
+      nextSteps: _toStringList(diseaseMap['nextSteps']),
+    );
+
+    return ScanHistoryItem(
+      imagePath: json['imagePath']?.toString() ?? '',
+      disease: json['disease']?.toString() ?? disease.name,
+      severity: json['severity']?.toString() ?? disease.severity,
+      confidence: _toDouble(json['confidence'], fallback: disease.confidence),
+      diseaseDetails: disease,
+      locationLabel: json['locationLabel']?.toString() ?? 'My Farm',
+      lat: _toDouble(json['lat'], fallback: 19.0760),
+      lng: _toDouble(json['lng'], fallback: 72.8777),
+      timestamp:
+          DateTime.tryParse(json['timestamp']?.toString() ?? '') ??
+          DateTime.now(),
+    );
+  }
 
   void _onItemTapped(int index) {
     setState(() {
@@ -594,9 +804,68 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
+  Future<ImageSource?> _pickImageSource() async {
+    return showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.camera_alt),
+                title: const Text('Take Photo'),
+                onTap: () => Navigator.of(ctx).pop(ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library),
+                title: const Text('Choose from Gallery'),
+                onTap: () => Navigator.of(ctx).pop(ImageSource.gallery),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<bool> _requestCameraPermission() async {
+    final status = await Permission.camera.status;
+    if (status.isGranted) return true;
+
+    final result = await Permission.camera.request();
+    if (result.isGranted) return true;
+
+    if (!mounted) return false;
+    if (result.isPermanentlyDenied) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Camera permission is permanently denied. Enable it from app settings.',
+          ),
+        ),
+      );
+      await openAppSettings();
+      return false;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Camera permission is required to take photos.')),
+    );
+    return false;
+  }
+
   void _uploadImage() async {
+    final ImageSource? source = await _pickImageSource();
+    if (source == null) return;
+
+    if (source == ImageSource.camera) {
+      final granted = await _requestCameraPermission();
+      if (!granted) return;
+    }
+
     final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+    final XFile? image = await picker.pickImage(source: source);
     if (image != null) {
       debugPrint("\n=======================================================");
       debugPrint("📷 [STEP 1] Image successfully selected by user! Path: ${image.path}");
@@ -607,13 +876,30 @@ class _MainScreenState extends State<MainScreen> {
         context: context,
         barrierDismissible: false,
         builder: (BuildContext dialogContext) {
-          return const AlertDialog(
-            content: Row(
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(width: 20),
-                Expanded(child: Text("Analyzing Image with AI...")),
-              ],
+          return AlertDialog(
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.file(
+                      File(image.path),
+                      width: 160,
+                      height: 160,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  const Row(
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(width: 16),
+                      Expanded(child: Text("Analyzing image with AI...")),
+                    ],
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -626,14 +912,14 @@ class _MainScreenState extends State<MainScreen> {
         final base64Image = base64Encode(bytes);
         debugPrint("✅ [STEP 2] Image converted directly into Base64 byte format.");
 
-        final url = Uri.parse('http://172.20.10.5:11434/api/generate');
+        final url = Uri.parse('$_ollamaBaseUrl/api/generate');
         debugPrint("🌐 [STEP 3] Preparing to ping the backend API endpoint at: $url");
         
         final response = await http.post(
           url,
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
-            "model": "gemma4",
+            "model": _ollamaModel,
             "prompt":
                 "You are an expert Plant Pathologist.\n\nAnalyze the following image for crop diseases.\n\nRespond ONLY in JSON format:\n{\n  \"disease\": \"\",\n  \"confidence\": 0.0,\n  \"severity\": \"\",\n  \"treatment\": \"\",\n  \"chemical\": \"\",\n  \"dosage\": \"\",\n  \"application_timing\": \"\",\n  \"prevention\": \"\",\n  \"spread_risk\": \"\",\n  \"symptoms\": [\"\"],\n  \"next_steps\": [\"\"]\n}\n\nKeep responses short and practical. Return ONLY valid JSON. No explanation, no extra text.",
             "images": [base64Image],
@@ -733,9 +1019,30 @@ class _MainScreenState extends State<MainScreen> {
         debugPrint("Location err: $locErr");
       }
 
+      final newItem = ScanHistoryItem(
+        imagePath: image.path,
+        disease: disease!.name,
+        severity: disease!.severity,
+        confidence: disease!.confidence,
+        diseaseDetails: disease!,
+        locationLabel: 'My Farm',
+        lat: lat,
+        lng: lng,
+        timestamp: DateTime.now(),
+      );
+
       setState(() {
         _data.add(LocationData(lat, lng, 'My Farm', disease!.name));
+        _scanHistory.insert(0, newItem);
       });
+
+      await _persistScanResultToSql(newItem);
+
+      try {
+        await CropAlertNotificationService.showPostAnalysisDummyAlert(disease!);
+      } catch (notificationError) {
+        debugPrint('Notification error: $notificationError');
+      }
 
       if (mounted) {
         Navigator.push(
@@ -752,38 +1059,125 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  void _addMessage(String message) {
+  Future<void> _addMessage(String message) async {
     setState(() {
       _messages.add('Farmer: $message');
       _messages.add('Bot is typing...');
     });
 
-    Future.delayed(const Duration(seconds: 1), () {
+    String botReply =
+        "I'm still learning about farming. Could you provide a clearer photo or more details?";
+    final lowerMsg = message.toLowerCase();
+    const offTopicReply =
+        'I can only help with farming and crop disease questions. Please ask about crops, pests, diseases, soil, irrigation, fertilizer, or markets.';
+
+    final isFarmingQuestion = _isFarmingQuestion(lowerMsg);
+
+    if (!isFarmingQuestion) {
       if (!mounted) return;
       setState(() {
-        _messages.removeLast(); // Remove 'Bot is typing...'
-        String botReply =
-            "I'm still learning about farming. Could you provide a clearer photo or more details?";
-        String lowerMsg = message.toLowerCase();
-        if (lowerMsg.contains('water') || lowerMsg.contains('irrigation')) {
-          botReply =
-              "For current conditions, water your crops early morning to reduce evaporation and fungal diseases.";
-        } else if (lowerMsg.contains('rust') ||
-            lowerMsg.contains('blight') ||
-            lowerMsg.contains('mildew')) {
-          botReply =
-              "This looks like a fungal infection. Please check the Treatment Plan section for exact fungicide dosage.";
-        } else if (lowerMsg.contains('hello') || lowerMsg.contains('hi')) {
-          botReply =
-              "Hello! I am CropGuard AI. How can I help you with your crops today?";
-        } else if (lowerMsg.contains('fertilizer') ||
-            lowerMsg.contains('npk')) {
-          botReply =
-              "Based on general needs, a balanced NPK fertilizer works best. Ensure soil testing before application.";
+        if (_messages.isNotEmpty && _messages.last == 'Bot is typing...') {
+          _messages.removeLast();
         }
-        _messages.add('Bot: $botReply');
+        _messages.add('Bot: $offTopicReply');
       });
+      return;
+    }
+
+    try {
+      final prompt =
+          'You are CropGuard AI, an agricultural assistant for Indian farmers. '
+          'Answer only farming and crop disease questions. Keep response short, practical, and safe.\n\n'
+          'Farmer question: $message';
+
+      final response = await http.post(
+        Uri.parse('$_ollamaBaseUrl/api/generate'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          "model": _ollamaModel,
+          "prompt": prompt,
+          "stream": false,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final jsonBody = jsonDecode(response.body);
+        final modelText = jsonBody['response']?.toString().trim();
+        if (modelText != null && modelText.isNotEmpty) {
+          botReply = modelText;
+        }
+      } else {
+        botReply = 'Local model is unavailable right now. Please try again.';
+      }
+    } catch (_) {
+      if (lowerMsg.contains('water') || lowerMsg.contains('irrigation')) {
+        botReply =
+            "For current conditions, water your crops early morning to reduce evaporation and fungal diseases.";
+      } else if (lowerMsg.contains('rust') ||
+          lowerMsg.contains('blight') ||
+          lowerMsg.contains('mildew')) {
+        botReply =
+            "This looks like a fungal infection. Please check the Treatment Plan section for exact fungicide dosage.";
+      } else if (lowerMsg.contains('hello') || lowerMsg.contains('hi')) {
+        botReply =
+            "Hello! I am CropGuard AI. How can I help you with your crops today?";
+      } else if (lowerMsg.contains('fertilizer') || lowerMsg.contains('npk')) {
+        botReply =
+            "Based on general needs, a balanced NPK fertilizer works best. Ensure soil testing before application.";
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      if (_messages.isNotEmpty && _messages.last == 'Bot is typing...') {
+        _messages.removeLast();
+      }
+      _messages.add('Bot: $botReply');
     });
+  }
+
+  bool _isFarmingQuestion(String lowerMsg) {
+    const keywords = [
+      'crop',
+      'crops',
+      'farm',
+      'farming',
+      'agri',
+      'agriculture',
+      'seed',
+      'soil',
+      'irrigation',
+      'water',
+      'fertilizer',
+      'npk',
+      'manure',
+      'compost',
+      'pest',
+      'insect',
+      'fungus',
+      'fungal',
+      'disease',
+      'blight',
+      'rust',
+      'mildew',
+      'leaf',
+      'stem',
+      'root',
+      'yield',
+      'harvest',
+      'market',
+      'price',
+      'mandi',
+      'tomato',
+      'onion',
+      'potato',
+      'rice',
+      'wheat',
+      'maize',
+      'cotton',
+      'sugarcane',
+    ];
+    return keywords.any(lowerMsg.contains);
   }
 
   void _logout() {
@@ -803,6 +1197,8 @@ class _MainScreenState extends State<MainScreen> {
       HeatmapScreen(data: _data),
       GraphScreen(data: _data),
       ChatScreen(messages: _messages, onSend: _addMessage),
+      HistoryScreen(history: _scanHistory),
+      const MarketScreen(),
     ];
 
     return Scaffold(
@@ -832,6 +1228,14 @@ class _MainScreenState extends State<MainScreen> {
           BottomNavigationBarItem(icon: Icon(Icons.map), label: 'Heatmap'),
           BottomNavigationBarItem(icon: Icon(Icons.bar_chart), label: 'Graphs'),
           BottomNavigationBarItem(icon: Icon(Icons.chat), label: 'Chat'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.history),
+            label: 'History',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.storefront),
+            label: 'Market',
+          ),
         ],
         currentIndex: _selectedIndex,
         selectedItemColor: Colors.green,
@@ -902,6 +1306,117 @@ class LocationData {
 
   LocationData(this.lat, this.lng, this.taluka, this.disease);
 }
+
+class ScanHistoryItem {
+  final String imagePath;
+  final String disease;
+  final String severity;
+  final double confidence;
+  final Disease diseaseDetails;
+  final String locationLabel;
+  final double lat;
+  final double lng;
+  final DateTime timestamp;
+
+  ScanHistoryItem({
+    required this.imagePath,
+    required this.disease,
+    required this.severity,
+    required this.confidence,
+    required this.diseaseDetails,
+    required this.locationLabel,
+    required this.lat,
+    required this.lng,
+    required this.timestamp,
+  });
+}
+
+class MarketPricePoint {
+  final String marketName;
+  final String district;
+  final double lat;
+  final double lng;
+  final Map<String, double> pricesPerKgInr;
+
+  const MarketPricePoint({
+    required this.marketName,
+    required this.district,
+    required this.lat,
+    required this.lng,
+    required this.pricesPerKgInr,
+  });
+}
+
+class NearbyMarketQuote {
+  final MarketPricePoint market;
+  final double distanceKm;
+  final double pricePerKg;
+
+  const NearbyMarketQuote({
+    required this.market,
+    required this.distanceKm,
+    required this.pricePerKg,
+  });
+}
+
+class MarketSpot {
+  final String marketName;
+  final String district;
+  final double lat;
+  final double lng;
+
+  const MarketSpot({
+    required this.marketName,
+    required this.district,
+    required this.lat,
+    required this.lng,
+  });
+}
+
+const List<MarketSpot> kMarketSpots = [
+  MarketSpot(
+    marketName: 'Vashi APMC',
+    district: 'Navi Mumbai',
+    lat: 19.0760,
+    lng: 72.9986,
+  ),
+  MarketSpot(
+    marketName: 'Lasalgaon APMC',
+    district: 'Nashik',
+    lat: 20.1426,
+    lng: 74.2395,
+  ),
+  MarketSpot(
+    marketName: 'Pune Gultekdi Market',
+    district: 'Pune',
+    lat: 18.5018,
+    lng: 73.8777,
+  ),
+  MarketSpot(
+    marketName: 'Belgaum APMC',
+    district: 'Belagavi',
+    lat: 15.8497,
+    lng: 74.4977,
+  ),
+  MarketSpot(
+    marketName: 'Hubballi APMC',
+    district: 'Dharwad',
+    lat: 15.3647,
+    lng: 75.1239,
+  ),
+  MarketSpot(
+    marketName: 'Mapusa Market Yard',
+    district: 'North Goa',
+    lat: 15.5914,
+    lng: 73.8089,
+  ),
+  MarketSpot(
+    marketName: 'Margao Municipal Market',
+    district: 'South Goa',
+    lat: 15.2832,
+    lng: 73.9862,
+  ),
+];
 
 class HomeScreen extends StatelessWidget {
   final VoidCallback onUpload;
@@ -1258,6 +1773,13 @@ class HomeScreen extends StatelessWidget {
               description: _t('Ask farming questions'),
               onTap: () => onNavigate(3),
             ),
+            const SizedBox(height: 10),
+            _FeatureCard(
+              icon: Icons.storefront,
+              title: _t('Local Market Prices'),
+              description: _t('Find nearby selling points and average prices'),
+              onTap: () => onNavigate(5),
+            ),
             const SizedBox(height: 24),
 
             // Tips Section
@@ -1613,13 +2135,14 @@ class AnalysisScreen extends StatelessWidget {
                   // Risk Level
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
                       color: Colors.orange[50],
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: Colors.orange[200]!),
                     ),
                     child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Icon(
                           Icons.warning_amber_rounded,
@@ -1627,19 +2150,29 @@ class AnalysisScreen extends StatelessWidget {
                           size: 28,
                         ),
                         const SizedBox(width: 12),
-                        const Text(
-                          'Spread Risk: ',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                        Text(
-                          disease.spreadRisk,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            color: Colors.orange,
-                            fontWeight: FontWeight.bold,
+                        Expanded(
+                          child: RichText(
+                            text: TextSpan(
+                              style: DefaultTextStyle.of(context).style.copyWith(
+                                fontSize: 16,
+                              ),
+                              children: [
+                                const TextSpan(
+                                  text: 'Spread Risk: ',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: disease.spreadRisk,
+                                  style: const TextStyle(
+                                    color: Colors.orange,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ],
@@ -1882,7 +2415,10 @@ class HeatmapScreen extends StatefulWidget {
 class _HeatmapScreenState extends State<HeatmapScreen> {
   late GoogleMapController mapController;
   final Set<Marker> _markers = {};
+  final Set<Circle> _circles = {};
   bool _locationPermissionGranted = false;
+  LatLng? _currentPosition;
+  bool _mapReady = false;
 
   @override
   void initState() {
@@ -1893,12 +2429,60 @@ class _HeatmapScreenState extends State<HeatmapScreen> {
 
   void _initMarkers() {
     for (var d in widget.data) {
+      final id = '${d.lat}-${d.lng}';
       _markers.add(
         Marker(
-          markerId: MarkerId('${d.lat}-${d.lng}'),
+          markerId: MarkerId(id),
           position: LatLng(d.lat, d.lng),
           infoWindow: InfoWindow(title: d.disease, snippet: d.taluka),
           icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        ),
+      );
+      _circles.add(
+        Circle(
+          circleId: CircleId('glow-$id'),
+          center: LatLng(d.lat, d.lng),
+          radius: 170,
+          fillColor: Colors.redAccent.withOpacity(0.18),
+          strokeColor: Colors.transparent,
+          strokeWidth: 0,
+        ),
+      );
+      _circles.add(
+        Circle(
+          circleId: CircleId('core-$id'),
+          center: LatLng(d.lat, d.lng),
+          radius: 75,
+          fillColor: Colors.red.withOpacity(0.30),
+          strokeColor: Colors.redAccent.withOpacity(0.85),
+          strokeWidth: 2,
+        ),
+      );
+    }
+
+    for (final market in kMarketSpots) {
+      final marketId = 'market-${market.marketName}';
+      _markers.add(
+        Marker(
+          markerId: MarkerId(marketId),
+          position: LatLng(market.lat, market.lng),
+          infoWindow: InfoWindow(
+            title: '${market.marketName} (Selling Market)',
+            snippet: market.district,
+          ),
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueAzure,
+          ),
+        ),
+      );
+      _circles.add(
+        Circle(
+          circleId: CircleId('market-glow-$marketId'),
+          center: LatLng(market.lat, market.lng),
+          radius: 230,
+          fillColor: Colors.greenAccent.withOpacity(0.14),
+          strokeColor: Colors.green.withOpacity(0.45),
+          strokeWidth: 1,
         ),
       );
     }
@@ -1923,15 +2507,15 @@ class _HeatmapScreenState extends State<HeatmapScreen> {
     if (mounted) {
       setState(() {
         _locationPermissionGranted = true;
+        _currentPosition = LatLng(position.latitude, position.longitude);
       });
-      mapController.animateCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(
-            target: LatLng(position.latitude, position.longitude),
-            zoom: 11,
+      if (_mapReady) {
+        mapController.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(target: _currentPosition!, zoom: 13),
           ),
-        ),
-      );
+        );
+      }
     }
   }
 
@@ -1940,14 +2524,496 @@ class _HeatmapScreenState extends State<HeatmapScreen> {
     return GoogleMap(
       onMapCreated: (GoogleMapController controller) {
         mapController = controller;
+        _mapReady = true;
+        if (_currentPosition != null) {
+          mapController.animateCamera(
+            CameraUpdate.newCameraPosition(
+              CameraPosition(target: _currentPosition!, zoom: 13),
+            ),
+          );
+        }
       },
-      initialCameraPosition: const CameraPosition(
-        target: LatLng(19.0760, 72.8777),
-        zoom: 10,
+      initialCameraPosition: CameraPosition(
+        target: _currentPosition ?? const LatLng(19.0760, 72.8777),
+        zoom: _currentPosition != null ? 13 : 10,
       ),
       markers: _markers,
+      circles: _circles,
       myLocationEnabled: _locationPermissionGranted,
       myLocationButtonEnabled: _locationPermissionGranted,
+    );
+  }
+}
+
+class HistoryScreen extends StatelessWidget {
+  final List<ScanHistoryItem> history;
+
+  const HistoryScreen({super.key, required this.history});
+
+  @override
+  Widget build(BuildContext context) {
+    if (history.isEmpty) {
+      return const Center(
+        child: Text(
+          'No scan history yet.\nUpload a crop image to create records.',
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: history.length,
+      itemBuilder: (context, index) {
+        final item = history[index];
+        return Card(
+          margin: const EdgeInsets.symmetric(vertical: 8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(color: Colors.redAccent.withOpacity(0.18)),
+          ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => AnalysisScreen(
+                    imagePath: item.imagePath,
+                    disease: item.diseaseDetails,
+                    onChat: (_) {},
+                  ),
+                ),
+              );
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 14,
+                    height: 14,
+                    margin: const EdgeInsets.only(top: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.redAccent.withOpacity(0.75),
+                          blurRadius: 14,
+                          spreadRadius: 3,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.file(
+                      File(item.imagePath),
+                      width: 70,
+                      height: 70,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        width: 70,
+                        height: 70,
+                        color: Colors.grey.shade200,
+                        child: const Icon(Icons.broken_image_outlined),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.disease,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Severity: ${item.severity}  |  Confidence: ${item.confidence.toStringAsFixed(1)}%',
+                          style: TextStyle(color: Colors.grey.shade700),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${item.locationLabel} (${item.lat.toStringAsFixed(4)}, ${item.lng.toStringAsFixed(4)})',
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          item.timestamp.toLocal().toString(),
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class MarketScreen extends StatefulWidget {
+  const MarketScreen({super.key});
+
+  @override
+  State<MarketScreen> createState() => _MarketScreenState();
+}
+
+class _MarketScreenState extends State<MarketScreen> {
+  static const List<String> _supportedCrops = [
+    'Tomato',
+    'Onion',
+    'Potato',
+    'Rice',
+    'Wheat',
+    'Maize',
+    'Cotton',
+    'Sugarcane',
+  ];
+
+  static const List<MarketPricePoint> _marketDirectory = [
+    MarketPricePoint(
+      marketName: 'Vashi APMC',
+      district: 'Navi Mumbai',
+      lat: 19.0760,
+      lng: 72.9986,
+      pricesPerKgInr: {
+        'Tomato': 22,
+        'Onion': 28,
+        'Potato': 25,
+        'Rice': 44,
+        'Wheat': 31,
+        'Maize': 24,
+      },
+    ),
+    MarketPricePoint(
+      marketName: 'Lasalgaon APMC',
+      district: 'Nashik',
+      lat: 20.1426,
+      lng: 74.2395,
+      pricesPerKgInr: {
+        'Tomato': 20,
+        'Onion': 33,
+        'Potato': 23,
+        'Maize': 26,
+      },
+    ),
+    MarketPricePoint(
+      marketName: 'Pune Gultekdi Market',
+      district: 'Pune',
+      lat: 18.5018,
+      lng: 73.8777,
+      pricesPerKgInr: {
+        'Tomato': 24,
+        'Onion': 30,
+        'Potato': 26,
+        'Rice': 47,
+        'Wheat': 34,
+      },
+    ),
+    MarketPricePoint(
+      marketName: 'Belgaum APMC',
+      district: 'Belagavi',
+      lat: 15.8497,
+      lng: 74.4977,
+      pricesPerKgInr: {
+        'Tomato': 23,
+        'Onion': 29,
+        'Potato': 24,
+        'Sugarcane': 4,
+        'Maize': 25,
+      },
+    ),
+    MarketPricePoint(
+      marketName: 'Hubballi APMC',
+      district: 'Dharwad',
+      lat: 15.3647,
+      lng: 75.1239,
+      pricesPerKgInr: {
+        'Tomato': 21,
+        'Onion': 27,
+        'Rice': 43,
+        'Wheat': 32,
+        'Cotton': 69,
+      },
+    ),
+    MarketPricePoint(
+      marketName: 'Mapusa Market Yard',
+      district: 'North Goa',
+      lat: 15.5914,
+      lng: 73.8089,
+      pricesPerKgInr: {
+        'Tomato': 26,
+        'Onion': 32,
+        'Potato': 29,
+        'Rice': 49,
+      },
+    ),
+    MarketPricePoint(
+      marketName: 'Margao Municipal Market',
+      district: 'South Goa',
+      lat: 15.2832,
+      lng: 73.9862,
+      pricesPerKgInr: {
+        'Tomato': 25,
+        'Onion': 31,
+        'Potato': 28,
+        'Rice': 48,
+      },
+    ),
+  ];
+
+  String _selectedCrop = _supportedCrops.first;
+  bool _loading = true;
+  String? _error;
+  LatLng? _currentLocation;
+  List<NearbyMarketQuote> _quotes = [];
+  double? _averagePrice;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshMarketData();
+  }
+
+  Future<void> _refreshMarketData() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        throw Exception('Location service is disabled.');
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        throw Exception('Location permission was denied.');
+      }
+
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      final current = LatLng(pos.latitude, pos.longitude);
+      final quotes = _buildQuotesForCrop(_selectedCrop, current);
+
+      setState(() {
+        _currentLocation = current;
+        _quotes = quotes;
+        _averagePrice = quotes.isEmpty
+            ? null
+            : quotes
+                      .map((q) => q.pricePerKg)
+                      .reduce((a, b) => a + b) /
+                  quotes.length;
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  List<NearbyMarketQuote> _buildQuotesForCrop(String crop, LatLng origin) {
+    final quotes = <NearbyMarketQuote>[];
+
+    for (final market in _marketDirectory) {
+      final price = market.pricesPerKgInr[crop];
+      if (price == null) continue;
+
+      final distance = _distanceKm(
+        origin.latitude,
+        origin.longitude,
+        market.lat,
+        market.lng,
+      );
+
+      quotes.add(
+        NearbyMarketQuote(
+          market: market,
+          distanceKm: distance,
+          pricePerKg: price,
+        ),
+      );
+    }
+
+    quotes.sort((a, b) => a.distanceKm.compareTo(b.distanceKm));
+    return quotes.take(4).toList();
+  }
+
+  double _distanceKm(double lat1, double lon1, double lat2, double lon2) {
+    const r = 6371.0;
+    final dLat = _toRadians(lat2 - lat1);
+    final dLon = _toRadians(lon2 - lon1);
+    final a =
+        math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_toRadians(lat1)) *
+            math.cos(_toRadians(lat2)) *
+            math.sin(dLon / 2) *
+            math.sin(dLon / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return r * c;
+  }
+
+  double _toRadians(double degree) => degree * (math.pi / 180.0);
+
+  @override
+  Widget build(BuildContext context) {
+    final bestQuote = _quotes.isEmpty
+        ? null
+        : _quotes.reduce(
+            (a, b) => a.pricePerKg >= b.pricePerKg ? a : b,
+          );
+
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return RefreshIndicator(
+      onRefresh: _refreshMarketData,
+      child: ListView(
+        padding: const EdgeInsets.all(14),
+        children: [
+          Card(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Local Selling Intelligence',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    value: _selectedCrop,
+                    decoration: const InputDecoration(
+                      labelText: 'Select Product/Crop',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: _supportedCrops
+                        .map(
+                          (crop) => DropdownMenuItem(
+                            value: crop,
+                            child: Text(crop),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null || _currentLocation == null) return;
+                      final quotes = _buildQuotesForCrop(value, _currentLocation!);
+                      setState(() {
+                        _selectedCrop = value;
+                        _quotes = quotes;
+                        _averagePrice = quotes.isEmpty
+                            ? null
+                            : quotes
+                                      .map((q) => q.pricePerKg)
+                                      .reduce((a, b) => a + b) /
+                                  quotes.length;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    _currentLocation == null
+                        ? 'Location unavailable'
+                        : 'Your location: ${_currentLocation!.latitude.toStringAsFixed(4)}, ${_currentLocation!.longitude.toStringAsFixed(4)}',
+                    style: TextStyle(color: Colors.grey.shade700),
+                  ),
+                  if (_averagePrice != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Avg local selling price for $_selectedCrop: INR ${_averagePrice!.toStringAsFixed(1)} / kg',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: Colors.green,
+                      ),
+                    ),
+                  ],
+                  if (bestQuote != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'Recommended place to sell now: ${bestQuote.market.marketName} (INR ${bestQuote.pricePerKg.toStringAsFixed(1)}/kg)',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(
+                _error!,
+                style: const TextStyle(color: Colors.redAccent),
+              ),
+            ),
+          const SizedBox(height: 10),
+          ..._quotes.map(
+            (quote) => Card(
+              child: ListTile(
+                leading: const Icon(Icons.storefront, color: Colors.green),
+                title: Text(quote.market.marketName),
+                subtitle: Text(
+                  '${quote.market.district} • ${quote.distanceKm.toStringAsFixed(1)} km away',
+                ),
+                trailing: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    const Text(
+                      'Avg Price',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                    Text(
+                      'INR ${quote.pricePerKg.toStringAsFixed(1)}/kg',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (_quotes.isEmpty && _error == null)
+            const Padding(
+              padding: EdgeInsets.only(top: 18),
+              child: Text(
+                'No market data found for selected crop near your location.',
+                textAlign: TextAlign.center,
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -2171,15 +3237,105 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
   late ScrollController _scrollController;
+  final stt.SpeechToText _speechToText = stt.SpeechToText();
+  final FlutterTts _flutterTts = FlutterTts();
+  bool _isListening = false;
+  bool _voiceOutputEnabled = true;
+  String _lastSpokenBotMessage = '';
 
   @override
   void initState() {
     super.initState();
     _scrollController = ScrollController();
+    _initTts();
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.messages.isEmpty) return;
+    final latest = widget.messages.last;
+    if (latest.startsWith('Bot: ') &&
+        latest != 'Bot: Bot is typing...' &&
+        latest != _lastSpokenBotMessage &&
+        _voiceOutputEnabled) {
+      _lastSpokenBotMessage = latest;
+      final text = latest.replaceFirst('Bot: ', '');
+      _speak(text);
+    }
+  }
+
+  Future<void> _initTts() async {
+    await _flutterTts.setLanguage('en-US');
+    await _flutterTts.setPitch(1.0);
+    await _flutterTts.setSpeechRate(0.45);
+  }
+
+  Future<void> _speak(String text) async {
+    if (!_voiceOutputEnabled || text.trim().isEmpty) return;
+    await _flutterTts.stop();
+    await _flutterTts.speak(text);
+  }
+
+  Future<void> _toggleListening() async {
+    if (_isListening) {
+      await _speechToText.stop();
+      if (mounted) {
+        setState(() {
+          _isListening = false;
+        });
+      }
+      return;
+    }
+
+    final available = await _speechToText.initialize(
+      onStatus: (status) {
+        if (status == 'done' && mounted) {
+          setState(() {
+            _isListening = false;
+          });
+        }
+      },
+      onError: (_) {
+        if (mounted) {
+          setState(() {
+            _isListening = false;
+          });
+        }
+      },
+    );
+
+    if (!available) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Voice input not available on this device')),
+        );
+      }
+      return;
+    }
+
+    setState(() {
+      _isListening = true;
+    });
+
+    await _speechToText.listen(
+      onResult: (result) {
+        if (!mounted) return;
+        setState(() {
+          _controller.text = result.recognizedWords;
+          _controller.selection = TextSelection.fromPosition(
+            TextPosition(offset: _controller.text.length),
+          );
+        });
+      },
+      listenMode: stt.ListenMode.confirmation,
+    );
   }
 
   @override
   void dispose() {
+    _speechToText.stop();
+    _flutterTts.stop();
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -2312,6 +3468,38 @@ class _ChatScreenState extends State<ChatScreen> {
                       hintStyle: TextStyle(color: Colors.grey[500]),
                     ),
                     onSubmitted: (_) => _sendMessage(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    color: _isListening ? Colors.red[500] : Colors.blueGrey[500],
+                    borderRadius: BorderRadius.circular(50),
+                  ),
+                  child: IconButton(
+                    icon: Icon(
+                      _isListening ? Icons.mic : Icons.mic_none,
+                      color: Colors.white,
+                    ),
+                    onPressed: _toggleListening,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    color: _voiceOutputEnabled ? Colors.deepPurple : Colors.grey,
+                    borderRadius: BorderRadius.circular(50),
+                  ),
+                  child: IconButton(
+                    icon: Icon(
+                      _voiceOutputEnabled ? Icons.volume_up : Icons.volume_off,
+                      color: Colors.white,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _voiceOutputEnabled = !_voiceOutputEnabled;
+                      });
+                    },
                   ),
                 ),
                 const SizedBox(width: 8),

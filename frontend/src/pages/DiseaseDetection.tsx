@@ -5,6 +5,39 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Camera, Upload, Loader2, CheckCircle2, AlertTriangle, Leaf, XCircle, MapPin, History, RefreshCcw } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { jsPDF } from "jspdf";
+
+const DEFAULT_MODEL = "gemma4:latest";
+
+const buildOllamaBaseUrls = () => {
+  const configured = (import.meta.env.VITE_OLLAMA_BASE_URL as string | undefined)?.trim();
+  const browserHost = typeof window !== "undefined" ? window.location.hostname : "localhost";
+  const candidates = [
+    configured,
+    `http://${browserHost}:11434`,
+    "http://localhost:11434",
+    "http://127.0.0.1:11434",
+  ].filter(Boolean) as string[];
+
+  return [...new Set(candidates.map((url) => url.replace(/\/+$/, "")))];
+};
+
+const resolveModelForBaseUrl = async (baseUrl: string, preferredModel: string) => {
+  try {
+    const tagsRes = await fetch(`${baseUrl}/api/tags`);
+    if (!tagsRes.ok) return preferredModel;
+
+    const tagsData = await tagsRes.json();
+    const installedModels: string[] = Array.isArray(tagsData?.models)
+      ? tagsData.models.map((m: { name?: string }) => m?.name).filter(Boolean)
+      : [];
+
+    if (installedModels.includes(preferredModel)) return preferredModel;
+    return installedModels[0] || preferredModel;
+  } catch {
+    return preferredModel;
+  }
+};
 
 const analyzingPhrases = [
   "Examining leaf patterns...",
@@ -89,24 +122,40 @@ export default function DiseaseDetection() {
         console.warn("Location access denied or unavailable. Using fallback.");
       }
 
-      // Send to local Ollama instance running Gemma 4
-      const response = await fetch("http://172.20.10.5:11434/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "gemma4:latest", 
-          stream: false,
-          format: "json",
-          prompt: `Analyze this image of a crop. Identify the crop and any disease present. Provide a severity level (Low, Medium, High). Provide a confidence score out of 100. Give a brief description and recommended treatment. Output STRICTLY as a JSON object matching this exact schema: {"crop": "string", "disease": "string", "confidence": number, "severity": "string", "description": "string", "treatment": "string"}`,
-          images: [base64Image]
-        })
-      });
+      const preferredModel = ((import.meta.env.VITE_OLLAMA_MODEL as string | undefined)?.trim() || DEFAULT_MODEL);
+      const baseUrls = buildOllamaBaseUrls();
+      let data: any = null;
+      let lastError = "";
 
-      if (!response.ok) {
-        throw new Error(`Ollama API error: ${response.statusText}`);
+      for (const baseUrl of baseUrls) {
+        try {
+          const modelToUse = await resolveModelForBaseUrl(baseUrl, preferredModel);
+          const response = await fetch(`${baseUrl}/api/generate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: modelToUse,
+              stream: false,
+              format: "json",
+              prompt: `Analyze this image of a crop. Identify the crop and any disease present. Provide a severity level (Low, Medium, High). Provide a confidence score out of 100. Give a brief description and recommended treatment. Output STRICTLY as a JSON object matching this exact schema: {"crop": "string", "disease": "string", "confidence": number, "severity": "string", "description": "string", "treatment": "string"}`,
+              images: [base64Image]
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error(`Ollama API error (${response.status}): ${response.statusText}`);
+          }
+
+          data = await response.json();
+          break;
+        } catch (callError: any) {
+          lastError = callError?.message || "Unknown connection error";
+        }
       }
 
-      const data = await response.json();
+      if (!data) {
+        throw new Error(`Unable to connect to Ollama. Tried: ${baseUrls.join(", ")}. Last error: ${lastError}`);
+      }
       
       let parsedResult;
       try {
@@ -132,7 +181,10 @@ export default function DiseaseDetection() {
 
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "An error occurred during analysis. Make sure Ollama is running locally.");
+      setError(
+        err.message ||
+          "An error occurred during analysis. Ensure Ollama is running and set VITE_OLLAMA_BASE_URL/VITE_OLLAMA_MODEL if needed."
+      );
     } finally {
       setIsAnalyzing(false);
     }
@@ -142,6 +194,93 @@ export default function DiseaseDetection() {
     setScanHistory([]);
     setSelectedResult(null);
     localStorage.removeItem("cropguard_scans");
+  };
+
+  const loadImageDataUrl = (src: string) =>
+    new Promise<{ dataUrl: string; width: number; height: number }>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("Unable to prepare report image."));
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        resolve({
+          dataUrl: canvas.toDataURL("image/jpeg", 0.92),
+          width: canvas.width,
+          height: canvas.height,
+        });
+      };
+      img.onerror = () => reject(new Error("Unable to load scanned image."));
+      img.src = src;
+    });
+
+  const handleDownloadPdfReport = async () => {
+    if (!selectedResult) return;
+    try {
+      const doc = new jsPDF({ unit: "mm", format: "a4" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const left = 14;
+      const right = pageWidth - 14;
+      let y = 16;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(18);
+      doc.text("Crop Disease Detection Report", left, y);
+      y += 8;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      doc.text(`Generated: ${new Date().toLocaleString()}`, left, y);
+      y += 7;
+
+      const { dataUrl, width, height } = await loadImageDataUrl(selectedResult.image);
+      const maxImageWidth = right - left;
+      const maxImageHeight = 90;
+      const imageRatio = width / height;
+      let renderWidth = maxImageWidth;
+      let renderHeight = renderWidth / imageRatio;
+      if (renderHeight > maxImageHeight) {
+        renderHeight = maxImageHeight;
+        renderWidth = renderHeight * imageRatio;
+      }
+      doc.addImage(dataUrl, "JPEG", left, y, renderWidth, renderHeight);
+      y += renderHeight + 8;
+
+      const lines = [
+        `Crop: ${selectedResult.crop || "Unknown"}`,
+        `Detected disease: ${selectedResult.disease || "Unknown"}`,
+        `Confidence: ${selectedResult.confidence ?? 0}%`,
+        `Severity: ${selectedResult.severity || "Unknown"}`,
+        `Scan location: ${selectedResult.location || "Unknown"}`,
+        `Scan time: ${selectedResult.timestamp || "Unknown"}`,
+        `Description: ${selectedResult.description || "No description provided."}`,
+        `Recommended treatment: ${selectedResult.treatment || "No treatment suggestions available."}`,
+      ];
+
+      doc.setFontSize(11);
+      for (const line of lines) {
+        const wrapped = doc.splitTextToSize(line, right - left);
+        if (y + wrapped.length * 6 > pageHeight - 14) {
+          doc.addPage();
+          y = 16;
+        }
+        doc.text(wrapped, left, y);
+        y += wrapped.length * 6;
+      }
+
+      const safeCrop = (selectedResult.crop || "crop").toString().replace(/\s+/g, "-").toLowerCase();
+      const safeDisease = (selectedResult.disease || "disease").toString().replace(/\s+/g, "-").toLowerCase();
+      doc.save(`cropguard-report-${safeCrop}-${safeDisease}.pdf`);
+    } catch (pdfError: any) {
+      console.error(pdfError);
+      setError(pdfError?.message || "Failed to generate PDF report.");
+    }
   };
 
   return (
@@ -281,6 +420,15 @@ export default function DiseaseDetection() {
 
               {selectedResult && !isAnalyzing && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      onClick={handleDownloadPdfReport}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                    >
+                      Download PDF Report
+                    </Button>
+                  </div>
                   <div className="relative group rounded-2xl overflow-hidden shadow-2xl border border-white/10">
                     <img src={selectedResult.image} alt={selectedResult.crop} className="w-full h-64 object-cover transition-transform duration-700 group-hover:scale-105" loading="lazy" />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>

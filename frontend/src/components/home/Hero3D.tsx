@@ -56,7 +56,7 @@ const FloatingDirtBase = () => {
     <group position={[0, -4.5, 0]}>
       {/* Main Core Chunk of Dirt / Rock */}
       <mesh geometry={dirtGeo} receiveShadow castShadow>
-         <meshStandardMaterial color="#302013" roughness={1} metalness={0.05} />
+         <meshStandardMaterial color="#7a4a26" roughness={0.85} metalness={0.08} />
       </mesh>
       
       {/* Top green lush layer overlapping the top edge */}

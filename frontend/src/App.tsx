@@ -6,7 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import Index from "./pages/Index.tsx";
 import DiseaseDetection from "./pages/DiseaseDetection.tsx";
 import PestHeatmap from "./pages/PestHeatmap.tsx";
-import WeatherForecast from "./pages/WeatherForecast.tsx";
+import WeatherForecast from "./pages/WeatherForecastOpenWeather.tsx";
 import Treatments from "./pages/Treatments.tsx";
 import Reports from "./pages/Reports.tsx";
 import NotFound from "./pages/NotFound.tsx";

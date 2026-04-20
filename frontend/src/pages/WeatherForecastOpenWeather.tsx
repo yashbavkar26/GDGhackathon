@@ -22,9 +22,28 @@ import {
   BarChart,
   Bar,
 } from "recharts";
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 
-const defaultWeekForecast = [
+type ForecastRow = {
+  day: string;
+  temp: number;
+  humidity: number;
+  rain: number;
+  risk: number;
+};
+
+type LiveWeather = {
+  temp: number;
+  feelsLike: number;
+  humidity: number;
+  rain: number;
+  windKmh: number;
+  condition: string;
+  locationLabel: string;
+  updatedAt: string;
+};
+
+const defaultWeekForecast: ForecastRow[] = [
   { day: "Mon", temp: 32, humidity: 65, rain: 0, risk: 25 },
   { day: "Tue", temp: 34, humidity: 70, rain: 10, risk: 35 },
   { day: "Wed", temp: 30, humidity: 80, rain: 45, risk: 62 },
@@ -67,29 +86,9 @@ const impactColor: Record<string, string> = {
   Critical: "bg-destructive text-destructive-foreground",
 };
 
-type ForecastRow = {
-  day: string;
-  temp: number;
-  humidity: number;
-  rain: number;
-  risk: number;
-};
-
-type LiveWeather = {
-  temp: number;
-  feelsLike: number;
-  humidity: number;
-  rain: number;
-  wind: number;
-  condition: string;
-  locationLabel: string;
-  updatedAt: string;
-};
-
-const apiKey =
-  import.meta.env.VITE_GOOGLE_WEATHER_API_KEY ||
-  import.meta.env.VITE_GOOGLE_MAPS_API_KEY ||
-  "YOUR_GOOGLE_WEATHER_OR_MAPS_API_KEY";
+const openWeatherApiKey =
+  import.meta.env.VITE_OPENWEATHER_API_KEY ||
+  "YOUR_OPENWEATHER_API_KEY";
 
 const toNumber = (...values: unknown[]) => {
   for (const value of values) {
@@ -115,20 +114,10 @@ const getCurrentPosition = () =>
     });
   });
 
-const getDayLabel = (
-  idx: number,
-  dateObj?: { year?: number; month?: number; day?: number },
-) => {
-  if (dateObj?.year && dateObj?.month && dateObj?.day) {
-    const d = new Date(dateObj.year, dateObj.month - 1, dateObj.day);
-    return d.toLocaleDateString("en-US", { weekday: "short" });
-  }
-  const d = new Date();
-  d.setDate(d.getDate() + idx);
-  return d.toLocaleDateString("en-US", { weekday: "short" });
-};
+const weekdayLabel = (dateUnixSec: number) =>
+  new Date(dateUnixSec * 1000).toLocaleDateString("en-US", { weekday: "short" });
 
-export default function WeatherForecast() {
+export default function WeatherForecastOpenWeather() {
   const [latestCrop, setLatestCrop] = useState<string | null>(null);
   const [weekForecast, setWeekForecast] = useState<ForecastRow[]>(defaultWeekForecast);
   const [liveWeather, setLiveWeather] = useState<LiveWeather | null>(null);
@@ -144,8 +133,8 @@ export default function WeatherForecast() {
           setLatestCrop(scans[0].crop);
         }
       }
-    } catch (e) {
-      // Ignore local storage parse errors
+    } catch {
+      // ignore parse errors
     }
   }, []);
 
@@ -160,133 +149,87 @@ export default function WeatherForecast() {
 
       const position = await getCurrentPosition();
       const lat = position.coords.latitude;
-      const lng = position.coords.longitude;
+      const lon = position.coords.longitude;
 
-      const [currentResp, forecastResp, geocodeResp] = await Promise.all([
-        fetch(`https://weather.googleapis.com/v1/currentConditions:lookup?key=${apiKey}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            location: { latitude: lat, longitude: lng },
-            unitsSystem: "METRIC",
-          }),
-        }),
-        fetch(`https://weather.googleapis.com/v1/forecast/days:lookup?key=${apiKey}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            location: { latitude: lat, longitude: lng },
-            unitsSystem: "METRIC",
-            days: 7,
-          }),
-        }),
+      const [currentResp, forecastResp] = await Promise.all([
         fetch(
-          `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}`,
+          `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${openWeatherApiKey}&units=metric`,
+        ),
+        fetch(
+          `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${openWeatherApiKey}&units=metric`,
         ),
       ]);
 
       if (!currentResp.ok) {
-        throw new Error("Could not fetch live current weather.");
+        throw new Error("Could not fetch current weather from OpenWeather.");
       }
       if (!forecastResp.ok) {
-        throw new Error("Could not fetch live 7-day weather forecast.");
+        throw new Error("Could not fetch forecast weather from OpenWeather.");
       }
 
       const currentData = await currentResp.json();
       const forecastData = await forecastResp.json();
-      const geocodeData = geocodeResp.ok ? await geocodeResp.json() : null;
 
-      const current = currentData?.currentConditions ?? currentData;
-      const temp = toNumber(
-        current?.temperature?.degrees,
-        current?.temperature?.value,
-        current?.temperature,
-      );
-      const feelsLike = toNumber(
-        current?.feelsLikeTemperature?.degrees,
-        current?.feelsLikeTemperature?.value,
-        current?.feelsLikeTemperature,
-        temp,
-      );
-      const humidity = toNumber(
-        current?.relativeHumidity,
-        current?.humidity?.percent,
-        current?.humidity,
-      );
-      const rain = toNumber(
-        current?.precipitation?.qpf?.quantity,
-        current?.precipitation?.qpf,
-        current?.precipitationChance?.percent,
-      );
-      const wind = toNumber(
-        current?.wind?.speed?.value,
-        current?.wind?.speed?.valueKm,
-        current?.windSpeed?.value,
-        current?.windSpeed,
-      );
-      const condition =
-        current?.weatherCondition?.description?.text ||
-        current?.weatherCondition?.type ||
-        "Live Conditions";
-
+      const temp = toNumber(currentData?.main?.temp);
+      const feelsLike = toNumber(currentData?.main?.feels_like, temp);
+      const humidity = toNumber(currentData?.main?.humidity);
+      const rain = toNumber(currentData?.rain?.["1h"], currentData?.rain?.["3h"], 0);
+      const windKmh = toNumber(currentData?.wind?.speed, 0) * 3.6;
+      const condition = currentData?.weather?.[0]?.description || "Live Conditions";
       const locationLabel =
-        geocodeData?.results?.[0]?.formatted_address ||
-        `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+        currentData?.name && currentData?.sys?.country
+          ? `${currentData.name}, ${currentData.sys.country}`
+          : `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
 
-      const days = Array.isArray(forecastData?.forecastDays)
-        ? forecastData.forecastDays
-        : Array.isArray(forecastData?.days)
-          ? forecastData.days
-          : [];
+      const list = Array.isArray(forecastData?.list) ? forecastData.list : [];
+      const grouped: Record<
+        string,
+        { dt: number; temps: number[]; humidities: number[]; rainTotal: number }
+      > = {};
 
-      const parsedWeek: ForecastRow[] =
-        days.length > 0
-          ? days.slice(0, 7).map((day: any, idx: number) => {
-              const maxT = toNumber(
-                day?.maxTemperature?.degrees,
-                day?.daytimeForecast?.maxTemperature?.degrees,
-              );
-              const minT = toNumber(
-                day?.minTemperature?.degrees,
-                day?.nighttimeForecast?.minTemperature?.degrees,
-              );
-              const dayTemp = maxT && minT ? (maxT + minT) / 2 : maxT || minT || temp;
-              const dayHumidity = toNumber(
-                day?.daytimeForecast?.relativeHumidity,
-                day?.relativeHumidity,
-                humidity,
-              );
-              const dayRain = toNumber(
-                day?.daytimeForecast?.precipitation?.qpf?.quantity,
-                day?.daytimeForecast?.precipitationChance?.percent,
-                day?.precipitation?.qpf?.quantity,
-                0,
-              );
-              return {
-                day: getDayLabel(idx, day?.displayDate || day?.date),
-                temp: Number(dayTemp.toFixed(1)),
-                humidity: Number(dayHumidity.toFixed(1)),
-                rain: Number(dayRain.toFixed(1)),
-                risk: computeRisk(dayTemp, dayHumidity, dayRain),
-              };
-            })
-          : defaultWeekForecast;
+      list.forEach((entry: any) => {
+        const dt = toNumber(entry?.dt);
+        if (!dt) return;
+        const key = new Date(dt * 1000).toISOString().slice(0, 10);
+        if (!grouped[key]) {
+          grouped[key] = { dt, temps: [], humidities: [], rainTotal: 0 };
+        }
+        grouped[key].temps.push(toNumber(entry?.main?.temp));
+        grouped[key].humidities.push(toNumber(entry?.main?.humidity));
+        grouped[key].rainTotal += toNumber(entry?.rain?.["3h"], 0);
+      });
 
-      setWeekForecast(parsedWeek);
+      const parsedWeek = Object.values(grouped)
+        .sort((a, b) => a.dt - b.dt)
+        .slice(0, 7)
+        .map((d) => {
+          const avgTemp = d.temps.reduce((a, b) => a + b, 0) / Math.max(d.temps.length, 1);
+          const avgHumidity =
+            d.humidities.reduce((a, b) => a + b, 0) / Math.max(d.humidities.length, 1);
+          const dayRain = d.rainTotal;
+          return {
+            day: weekdayLabel(d.dt),
+            temp: Number(avgTemp.toFixed(1)),
+            humidity: Number(avgHumidity.toFixed(1)),
+            rain: Number(dayRain.toFixed(1)),
+            risk: computeRisk(avgTemp, avgHumidity, dayRain),
+          };
+        });
+
       setLiveWeather({
         temp,
         feelsLike,
         humidity,
         rain,
-        wind,
+        windKmh,
         condition,
         locationLabel,
         updatedAt: new Date().toLocaleTimeString(),
       });
+      setWeekForecast(parsedWeek.length > 0 ? parsedWeek : defaultWeekForecast);
     } catch (err: any) {
       setWeatherError(
-        err?.message ||
-          "Unable to fetch live weather for your current location right now.",
+        err?.message || "Unable to fetch live weather for your current location right now.",
       );
     } finally {
       setLoadingWeather(false);
@@ -357,7 +300,7 @@ export default function WeatherForecast() {
             },
             {
               label: "Wind",
-              value: `${(liveWeather?.wind ?? 0).toFixed(1)} km/h`,
+              value: `${(liveWeather?.windKmh ?? 0).toFixed(1)} km/h`,
               icon: Wind,
               sub: liveWeather?.condition || "Live conditions",
             },
@@ -403,7 +346,8 @@ export default function WeatherForecast() {
               </ResponsiveContainer>
               <div className="mt-3 p-3 bg-warning/10 border border-warning/20 rounded-lg">
                 <p className="text-xs font-semibold text-warning flex items-center gap-1">
-                  <AlertTriangle className="h-3 w-3" /> Peak risk on {peakRiskDay.day} ({peakRiskDay.risk}%)
+                  <AlertTriangle className="h-3 w-3" /> Peak risk on {peakRiskDay.day} (
+                  {peakRiskDay.risk}%)
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
                   High humidity plus rain creates optimal conditions for{" "}
@@ -426,7 +370,12 @@ export default function WeatherForecast() {
                   <XAxis dataKey="day" tick={{ fontSize: 12 }} />
                   <YAxis tick={{ fontSize: 12 }} />
                   <Tooltip />
-                  <Bar dataKey="humidity" fill="hsl(200,80%,50%)" radius={[4, 4, 0, 0]} opacity={0.7} />
+                  <Bar
+                    dataKey="humidity"
+                    fill="hsl(200,80%,50%)"
+                    radius={[4, 4, 0, 0]}
+                    opacity={0.7}
+                  />
                   <Bar dataKey="rain" fill="hsl(145,63%,32%)" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -453,7 +402,9 @@ export default function WeatherForecast() {
                   <div>
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-sm font-semibold">{rf.factor}</span>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${impactColor[rf.impact]}`}>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${impactColor[rf.impact]}`}
+                      >
                         {rf.impact}
                       </span>
                     </div>

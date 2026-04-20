@@ -13,6 +13,8 @@ const containerStyle = {
 };
 
 const defaultCenter = { lat: 20.5937, lng: 78.9629 }; // Center of India
+const dashboardMapsApiKey =
+  import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "YOUR_GOOGLE_MAPS_API_KEY";
 
 export default function PestHeatmap() {
   const [scans, setScans] = useState<any[]>([]);
@@ -20,7 +22,7 @@ export default function PestHeatmap() {
 
   const { isLoaded } = useJsApiLoader({
     id: "google-map-script",
-    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "[GCP_KEY]",
+    googleMapsApiKey: dashboardMapsApiKey,
   });
 
   
