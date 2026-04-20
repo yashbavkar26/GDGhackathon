@@ -1,5 +1,6 @@
 import React, { Suspense } from "react";
 import { motion } from "framer-motion";
+import { useTranslation } from "react-i18next";
 import { Play } from "lucide-react";
 import Hero3D from "@/components/home/Hero3D";
 import Navbar from "@/components/home/Navbar";
@@ -12,6 +13,8 @@ const Loader = () => (
 );
 
 const Index = () => {
+  const { t } = useTranslation();
+
   return (
     <div className="relative min-h-screen bg-[#020b06] text-white overflow-hidden selection:bg-green-500/30 font-sans">
       {/* Deep Background glow */}
@@ -40,9 +43,9 @@ const Index = () => {
             transition={{ duration: 0.8, delay: 0.2 }}
           >
             <h1 className="text-5xl md:text-7xl lg:text-8xl font-black leading-[0.9] tracking-tighter text-transparent bg-clip-text bg-gradient-to-b from-white via-white to-white/70 mb-6 drop-shadow-sm">
-              SMART CROP <br />
+              {t('hero_title_1')} <br />
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-green-300">
-                PROTECTION AI
+                {t('hero_title_2')}
               </span>
             </h1>
           </motion.div>
@@ -53,7 +56,7 @@ const Index = () => {
             transition={{ duration: 0.8, delay: 0.4 }}
             className="text-lg md:text-xl text-white/60 max-w-xl mb-10 font-medium leading-relaxed"
           >
-            Predict. Protect. Prosper. Transform your farming with real-time AI monitoring and early disease detection.
+            {t('hero_desc')}
           </motion.p>
 
           <motion.div
@@ -66,13 +69,13 @@ const Index = () => {
               onClick={() => window.location.href = '/disease-detection'}
               className="w-full sm:w-auto px-8 py-4 rounded-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-bold text-lg shadow-[0_0_30px_rgba(16,185,129,0.3)] hover:shadow-[0_0_40px_rgba(16,185,129,0.5)] transition-all transform hover:-translate-y-1"
             >
-              Start Detection
+              {t('btn_start')}
             </button>
             <button className="w-full sm:w-auto px-8 py-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white font-semibold text-lg flex items-center justify-center gap-3 transition-all">
               <div className="w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center">
                 <Play className="w-4 h-4 ml-0.5 fill-current" />
               </div>
-              Watch Demo
+              {t('btn_demo')}
             </button>
           </motion.div>
         </div>
@@ -92,8 +95,8 @@ const Index = () => {
               </h2>
               <div className="w-px h-12 bg-white/10"></div>
               <p className="text-white/70 text-sm font-medium leading-snug w-48">
-                Farms Supported <br />
-                <span className="text-white/40">Across 120 countries.</span>
+                {t('stats_farms')} <br />
+                <span className="text-white/40">{t('stats_farms_desc')}</span>
               </p>
             </div>
 
@@ -103,8 +106,8 @@ const Index = () => {
               </h2>
               <div className="w-px h-12 bg-white/10"></div>
               <p className="text-white/70 text-sm font-medium leading-snug w-48">
-                Detection Accuracy <br />
-                <span className="text-white/40">Powered by advanced AI.</span>
+                {t('stats_accuracy')} <br />
+                <span className="text-white/40">{t('stats_accuracy_desc')}</span>
               </p>
             </div>
 
@@ -114,8 +117,8 @@ const Index = () => {
               </h2>
               <div className="w-px h-12 bg-white/10"></div>
               <p className="text-white/70 text-sm font-medium leading-snug w-48">
-                AI Monitoring <br />
-                <span className="text-white/40">Always active protection.</span>
+                {t('stats_monitoring')} <br />
+                <span className="text-white/40">{t('stats_monitoring_desc')}</span>
               </p>
             </div>
             

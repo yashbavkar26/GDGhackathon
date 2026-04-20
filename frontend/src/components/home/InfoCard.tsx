@@ -1,8 +1,11 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { Activity, ShieldCheck, AlertTriangle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 const InfoCard = () => {
+  const { t } = useTranslation();
+
   return (
     <motion.div
       initial={{ opacity: 0, x: 50 }}
@@ -16,14 +19,14 @@ const InfoCard = () => {
 
       <h3 className="text-white font-bold text-lg mb-6 flex items-center gap-2">
         <Activity className="w-5 h-5 text-green-400" />
-        System Status
+        {t('card_title')}
       </h3>
 
       <div className="space-y-6 relative z-10">
         <div className="group">
           <p className="text-white/50 text-xs font-medium uppercase tracking-wider mb-1 flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            Live Monitoring
+            {t('card_online')}
           </p>
           <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden mt-2">
             <motion.div 
@@ -35,31 +38,21 @@ const InfoCard = () => {
           </div>
         </div>
 
-        <div className="group flex items-start gap-4">
-          <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center shrink-0 border border-green-500/20 group-hover:bg-green-500/20 transition-colors">
-            <ShieldCheck className="w-5 h-5 text-green-400" />
-          </div>
-          <div>
-            <h4 className="text-2xl font-bold text-white tracking-tight">1,847</h4>
-            <p className="text-white/50 text-xs font-medium mt-0.5">Crops Protected</p>
-          </div>
-        </div>
-
-        <div className="group flex items-start gap-4">
-          <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center shrink-0 border border-orange-500/20 group-hover:bg-orange-500/20 transition-colors">
-            <AlertTriangle className="w-5 h-5 text-orange-400" />
-          </div>
-          <div>
-            <h4 className="text-2xl font-bold text-white tracking-tight">23</h4>
-            <p className="text-white/50 text-xs font-medium mt-0.5">Active Alerts</p>
+        <div className="pt-4 border-t border-white/10">
+          <p className="text-white/50 text-xs font-medium mb-3">{t('card_metrics')}</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-white/5 rounded-lg p-3 border border-white/5">
+              <ShieldCheck className="w-4 h-4 text-emerald-400 mb-2" />
+              <p className="text-white font-bold text-lg">98%</p>
+              <p className="text-white/40 text-[10px] uppercase">Safety</p>
+            </div>
+            <div className="bg-white/5 rounded-lg p-3 border border-white/5">
+              <AlertTriangle className="w-4 h-4 text-orange-400 mb-2" />
+              <p className="text-white font-bold text-lg">0</p>
+              <p className="text-white/40 text-[10px] uppercase">Threats</p>
+            </div>
           </div>
         </div>
-      </div>
-      
-      <div className="mt-6 pt-4 border-t border-white/5">
-        <button className="w-full py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-white text-sm font-medium transition-colors border border-white/5">
-          View Detail Report
-        </button>
       </div>
     </motion.div>
   );

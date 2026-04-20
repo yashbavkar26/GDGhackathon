@@ -1,6 +1,7 @@
 import React from "react";
 import { Html } from "@react-three/drei";
 import { motion } from "framer-motion";
+import { useTranslation } from "react-i18next";
 
 const Label = ({ position, title, value, delay }: { position: [number, number, number], title: string, value: string, delay: number }) => {
   return (
@@ -20,12 +21,14 @@ const Label = ({ position, title, value, delay }: { position: [number, number, n
 };
 
 const FloatingLabels3D = () => {
+  const { t } = useTranslation();
+
   return (
     <group>
-      <Label position={[-3, 2, 0]} title="Humidity" value="78%" delay={1.2} />
-      <Label position={[3, 1.5, 0]} title="Pest Risk" value="Low" delay={1.4} />
-      <Label position={[-2.5, -1, 1]} title="Rain Chance" value="43%" delay={1.6} />
-      <Label position={[2.5, -0.5, 1]} title="Soil Health" value="Good" delay={1.8} />
+      <Label position={[-3, 2, 0]} title={t('lbl_humidity')} value="78%" delay={1.2} />
+      <Label position={[3, 1.5, 0]} title={t('lbl_pest')} value={t('lbl_low')} delay={1.4} />
+      <Label position={[-2.5, -1, 1]} title={t('lbl_rain')} value="43%" delay={1.6} />
+      <Label position={[2.5, -0.5, 1]} title={t('lbl_soil')} value={t('lbl_good')} delay={1.8} />
       
       <Html position={[0, -2.5, 2]} center className="pointer-events-none">
         <motion.div 
@@ -37,7 +40,7 @@ const FloatingLabels3D = () => {
           <span className="text-xs font-bold tracking-widest text-green-300 uppercase flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-ping absolute" />
             <span className="w-1.5 h-1.5 rounded-full bg-green-400 relative" />
-            AI Monitoring Active
+            {t('lbl_ai')}
           </span>
         </motion.div>
       </Html>
