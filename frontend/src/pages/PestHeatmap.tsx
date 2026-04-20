@@ -20,9 +20,10 @@ export default function PestHeatmap() {
 
   const { isLoaded } = useJsApiLoader({
     id: "google-map-script",
-    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "[GCP_API_KEY]",
+    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "[GCP_KEY]",
   });
 
+  
   useEffect(() => {
     try {
       const saved = localStorage.getItem("cropguard_scans");
