@@ -7,6 +7,9 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.light);
+final ValueNotifier<String> languageNotifier = ValueNotifier('English');
+
 void main() {
   runApp(const MyApp());
 }
@@ -16,25 +19,38 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'CropGuard AI',
-      theme: ThemeData(
-        primarySwatch: Colors.green,
-        useMaterial3: true,
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: Colors.grey[100],
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeNotifier,
+      builder: (_, ThemeMode currentMode, __) {
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'CropGuard AI',
+          themeMode: currentMode,
+          theme: ThemeData(
+            primarySwatch: Colors.green,
+            brightness: Brightness.light,
+            useMaterial3: true,
+            inputDecorationTheme: InputDecorationTheme(
+              filled: true,
+              fillColor: Colors.grey[100],
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 16,
+              ),
+            ),
           ),
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 16,
+          darkTheme: ThemeData(
+            primarySwatch: Colors.green,
+            brightness: Brightness.dark,
+            useMaterial3: true,
           ),
-        ),
-      ),
-      home: const AuthScreen(),
+          home: const AuthScreen(),
+        );
+      },
     );
   }
 }
@@ -582,6 +598,10 @@ class _MainScreenState extends State<MainScreen> {
     final ImagePicker picker = ImagePicker();
     final XFile? image = await picker.pickImage(source: ImageSource.gallery);
     if (image != null) {
+      debugPrint("\n=======================================================");
+      debugPrint("📷 [STEP 1] Image successfully selected by user! Path: ${image.path}");
+      debugPrint("=======================================================\n");
+
       // Show loading dialog
       showDialog(
         context: context,
@@ -604,53 +624,87 @@ class _MainScreenState extends State<MainScreen> {
       try {
         final bytes = await File(image.path).readAsBytes();
         final base64Image = base64Encode(bytes);
+        debugPrint("✅ [STEP 2] Image converted directly into Base64 byte format.");
 
-        final url = Uri.parse('http://192.168.18.242:11434/api/generate');
+        final url = Uri.parse('http://172.20.10.5:11434/api/generate');
+        debugPrint("🌐 [STEP 3] Preparing to ping the backend API endpoint at: $url");
+        
         final response = await http.post(
           url,
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             "model": "gemma4",
-            "prompt": "You are an expert Plant Pathologist.\n\nAnalyze the following image for crop diseases.\n\nRespond ONLY in JSON format:\n{\n  \"disease\": \"\",\n  \"confidence\": 0.0,\n  \"severity\": \"\",\n  \"treatment\": \"\",\n  \"chemical\": \"\",\n  \"dosage\": \"\",\n  \"application_timing\": \"\",\n  \"prevention\": \"\",\n  \"spread_risk\": \"\",\n  \"symptoms\": [\"\"],\n  \"next_steps\": [\"\"]\n}\n\nKeep responses short and practical. Return ONLY valid JSON. No explanation, no extra text.",
+            "prompt":
+                "You are an expert Plant Pathologist.\n\nAnalyze the following image for crop diseases.\n\nRespond ONLY in JSON format:\n{\n  \"disease\": \"\",\n  \"confidence\": 0.0,\n  \"severity\": \"\",\n  \"treatment\": \"\",\n  \"chemical\": \"\",\n  \"dosage\": \"\",\n  \"application_timing\": \"\",\n  \"prevention\": \"\",\n  \"spread_risk\": \"\",\n  \"symptoms\": [\"\"],\n  \"next_steps\": [\"\"]\n}\n\nKeep responses short and practical. Return ONLY valid JSON. No explanation, no extra text.",
             "images": [base64Image],
-            "stream": false
+            "stream": false,
           }),
         );
 
+        debugPrint("📥 [STEP 4] Received HTTP response from server! Status Code: ${response.statusCode}");
+
         if (response.statusCode == 200) {
+          debugPrint("✅ [STEP 5] Success! Connection valid. Processing the LLM string response...");
           final jsonResponse = jsonDecode(response.body);
           final responseText = jsonResponse['response'] as String;
-          
+
           final jsonStart = responseText.indexOf('{');
           final jsonEnd = responseText.lastIndexOf('}') + 1;
-          
+
           if (jsonStart != -1 && jsonEnd != -1) {
-            final parsedData = jsonDecode(responseText.substring(jsonStart, jsonEnd));
+            final parsedData = jsonDecode(
+              responseText.substring(jsonStart, jsonEnd),
+            );
+            debugPrint("🟢 [STEP 6] JSON successfully parsed! Predicted Disease: ${parsedData['disease']}");
+
             disease = Disease(
               name: parsedData['disease']?.toString() ?? 'Unknown Disease',
-              treatment: parsedData['treatment']?.toString() ?? 'No treatment specified',
-              chemical: parsedData['chemical']?.toString() ?? 'No chemical specified',
+              treatment:
+                  parsedData['treatment']?.toString() ??
+                  'No treatment specified',
+              chemical:
+                  parsedData['chemical']?.toString() ?? 'No chemical specified',
               dosage: parsedData['dosage']?.toString() ?? 'No dosage specified',
-              timing: parsedData['application_timing']?.toString() ?? 'No timing specified',
-              confidence: (parsedData['confidence'] is num) ? parsedData['confidence'].toDouble() : 0.0,
+              timing:
+                  parsedData['application_timing']?.toString() ??
+                  'No timing specified',
+              confidence: (parsedData['confidence'] is num)
+                  ? parsedData['confidence'].toDouble()
+                  : 0.0,
               severity: parsedData['severity']?.toString() ?? 'Unknown',
-              prevention: parsedData['prevention']?.toString() ?? 'No prevention specified',
+              prevention:
+                  parsedData['prevention']?.toString() ??
+                  'No prevention specified',
               spreadRisk: parsedData['spread_risk']?.toString() ?? 'Unknown',
-              symptoms: parsedData['symptoms'] != null ? List<String>.from(parsedData['symptoms']) : [],
-              nextSteps: parsedData['next_steps'] != null ? List<String>.from(parsedData['next_steps']) : [],
+              symptoms: parsedData['symptoms'] != null
+                  ? List<String>.from(parsedData['symptoms'])
+                  : [],
+              nextSteps: parsedData['next_steps'] != null
+                  ? List<String>.from(parsedData['next_steps'])
+                  : [],
             );
+          } else {
+             debugPrint("🔴 [ERROR] Could not extract valid JSON brackets from the response!");
+             debugPrint("Raw text from AI was: $responseText");
           }
+        } else {
+             debugPrint("🔴 [NETWORK ERROR] The server responded with an error, not 200 OK. Content: ${response.body}");
         }
       } catch (e) {
-        debugPrint("API Error: $e");
+        debugPrint("\n❌ [CRITICAL FATAL API ERROR] The backend API ping completely failed!");
+        debugPrint("Error output is: $e");
+        debugPrint("Make sure your Python Ollama backend is running and OLLAMA_HOST is 0.0.0.0!\n");
       }
+
 
       // Close the dialog
       if (mounted) Navigator.pop(context);
 
       if (disease == null) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to analyze image.')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to analyze image.')),
+          );
         }
         return;
       }
@@ -658,7 +712,7 @@ class _MainScreenState extends State<MainScreen> {
       // Fetch location to map it dynamically
       double lat = 19.0760;
       double lng = 72.8777;
-      
+
       try {
         bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
         if (serviceEnabled) {
@@ -666,8 +720,11 @@ class _MainScreenState extends State<MainScreen> {
           if (permission == LocationPermission.denied) {
             permission = await Geolocator.requestPermission();
           }
-          if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
-            Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.medium);
+          if (permission == LocationPermission.whileInUse ||
+              permission == LocationPermission.always) {
+            Position position = await Geolocator.getCurrentPosition(
+              desiredAccuracy: LocationAccuracy.medium,
+            );
             lat = position.latitude;
             lng = position.longitude;
           }
@@ -738,7 +795,11 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     List<Widget> widgetOptions = <Widget>[
-      HomeScreen(onUpload: _uploadImage, onNavigate: _onItemTapped, data: _data),
+      HomeScreen(
+        onUpload: _uploadImage,
+        onNavigate: _onItemTapped,
+        data: _data,
+      ),
       HeatmapScreen(data: _data),
       GraphScreen(data: _data),
       ChatScreen(messages: _messages, onSend: _addMessage),
@@ -857,14 +918,175 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     int totalCrops = data.length;
-    int diseaseCount = data.where((d) => d.disease.toLowerCase() != 'healthy' && d.disease.toLowerCase() != 'none').length;
+    int diseaseCount = data
+        .where(
+          (d) =>
+              d.disease.toLowerCase() != 'healthy' &&
+              d.disease.toLowerCase() != 'none',
+        )
+        .length;
     int healthyCount = totalCrops - diseaseCount;
-    return SingleChildScrollView(
+    return ValueListenableBuilder<String>(
+      valueListenable: languageNotifier,
+      builder: (_, String currentLang, __) {
+        String _t(String key) {
+          if (currentLang == 'English') return key;
+          Map<String, Map<String, String>> translations = {
+            'Marathi': {
+              'Good Morning, Farmer!': 'शुभ सकाळ, शेतकरी!',
+              'Your crops are healthy today': 'आज तुमची पिके निरोगी आहेत',
+              'Quick Stats': 'द्रुत आकडेवारी',
+              'Total Crops': 'एकूण पिके',
+              'Diseases': 'रोग',
+              'Healthy': 'निरोगी',
+              'Upload Crop Photo': 'पिकाचा फोटो अपलोड करा',
+              'Scan your crops for disease detection': 'रोग शोधण्यासाठी तुमचे पीक स्कॅन करा',
+              'Choose Image': 'प्रतिमा निवडा',
+              'Features': 'वैशिष्ट्ये',
+              'Disease Heatmap': 'रोग हिटमॅप',
+              'View diseases in your region': 'तुमच्या प्रदेशातील रोग पहा',
+              'Analytics': 'विश्लेषण',
+              'Check historical crop data': 'ऐतिहासिक पीक डेटा तपासा',
+              'AI Chatbot': 'एआय चॅटबॉट',
+              'Ask farming questions': 'शेतीबद्दल प्रश्न विचारा',
+              'Daily Tip': 'दैनिक टीप',
+              'Water your crops early in the morning to reduce disease risk and maximize water absorption.': 'रोगाचा धोका कमी करण्यासाठी आणि पाणी शोषण वाढवण्यासाठी तुमच्या पिकांना सकाळी लवकर पाणी द्या.',
+            },
+            'Hindi': {
+              'Good Morning, Farmer!': 'सुप्रभात, किसान!',
+              'Your crops are healthy today': 'आज आपकी फसलें स्वस्थ हैं',
+              'Quick Stats': 'त्वरित आँकड़े',
+              'Total Crops': 'कुल फसलें',
+              'Diseases': 'रोग',
+              'Healthy': 'स्वस्थ',
+              'Upload Crop Photo': 'फसल की फोटो अपलोड करें',
+              'Scan your crops for disease detection': 'रोग का पता लगाने के लिए अपनी फसल स्कैन करें',
+              'Choose Image': 'छवि चुनें',
+              'Features': 'विशेषताएं',
+              'Disease Heatmap': 'रोग हीटमैप',
+              'View diseases in your region': 'अपने क्षेत्र में रोग देखें',
+              'Analytics': 'विश्लेषण',
+              'Check historical crop data': 'ऐतिहासिक फसल डेटा जांचें',
+              'AI Chatbot': 'एआई चैटबॉट',
+              'Ask farming questions': 'खेती से जुड़े सवाल पूछें',
+              'Daily Tip': 'दैनिक सुझाव',
+              'Water your crops early in the morning to reduce disease risk and maximize water absorption.': 'बीमारी के जोखिम को कम करने और पानी के अवशोषण को अधिकतम करने के लिए अपनी फसलों को सुबह जल्दी पानी दें।',
+            },
+            'Konkani': {
+              'Good Morning, Farmer!': 'देव बरी सकाळ, शेतकार!',
+              'Your crops are healthy today': 'आयज तुमचीं पिकां बरीं आसात',
+              'Quick Stats': 'वेगीं आकडेमोड',
+              'Total Crops': 'एकूण पिकां',
+              'Diseases': 'रोग',
+              'Healthy': 'निरोगी',
+              'Upload Crop Photo': 'पिकाचो फोटो घालचो',
+              'Scan your crops for disease detection': 'रोग सोदपा खातीर तुमचीं पिकां स्कॅन करात',
+              'Choose Image': 'चित्र वेंचून काडात',
+              'Features': 'खाशेलपणां',
+              'Disease Heatmap': 'रोग हिटमॅप',
+              'View diseases in your region': 'तुमच्या वाठारांतले रोग पळयात',
+              'Analytics': 'विश्लेषण',
+              'Check historical crop data': 'फाटलो पीक डेटा तपासात',
+              'AI Chatbot': 'एआय चॅटबॉट',
+              'Ask farming questions': 'शेतीविशीं प्रस्न विचारात',
+              'Daily Tip': 'दिसपटी टीप',
+              'Water your crops early in the morning to reduce disease risk and maximize water absorption.': 'रोगाचो धोको उणो करपाक आनी उदक ओडून घेवप वाडोवपाक फुडें सकाळीं पिकांक उदक दितात.',
+            }
+          };
+          return translations[currentLang]?[key] ?? key;
+        }
+
+        return SingleChildScrollView(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ==========================================
+            // NEW FEATURE: APP PREFERENCES (THEME & LANGUAGE)
+            // This interactive card provides Light/Dark mode toggling
+            // and Multi-Language selection without changing the core contents
+            // ==========================================
+            Card(
+              elevation: 4,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              margin: const EdgeInsets.only(bottom: 20),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16.0,
+                  vertical: 8.0,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    // Language Dropdown selector added here for multi-language support
+                    ValueListenableBuilder<String>(
+                      valueListenable: languageNotifier,
+                      builder: (_, String currentLang, __) {
+                        return DropdownButton<String>(
+                          value: currentLang,
+                          icon: const Padding(
+                            padding: EdgeInsets.only(left: 8.0),
+                            child: Icon(Icons.language, color: Colors.green),
+                          ),
+                          elevation: 16,
+                          underline: Container(height: 2, color: Colors.green),
+                          onChanged: (String? newValue) {
+                            if (newValue != null) {
+                              languageNotifier.value =
+                                  newValue; // Update language state
+                            }
+                          },
+                          // English, Marathi, Hindi, Konkani
+                          items:
+                              <String>[
+                                'English',
+                                'Marathi',
+                                'Hindi',
+                                'Konkani',
+                              ].map<DropdownMenuItem<String>>((String value) {
+                                return DropdownMenuItem<String>(
+                                  value: value,
+                                  child: Text(
+                                    value,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                        );
+                      },
+                    ),
+                    const Spacer(),
+                    // Theme Switcher button for toggling between Light and Dark mode globally
+                    ValueListenableBuilder<ThemeMode>(
+                      valueListenable: themeNotifier,
+                      builder: (_, ThemeMode currentMode, __) {
+                        bool isDarkMode = currentMode == ThemeMode.dark;
+                        return IconButton(
+                          iconSize: 28,
+                          color: isDarkMode ? Colors.amber : Colors.blueGrey,
+                          icon: Icon(
+                            isDarkMode ? Icons.dark_mode : Icons.light_mode,
+                          ),
+                          onPressed: () {
+                            themeNotifier.value = isDarkMode
+                                ? ThemeMode.light
+                                : ThemeMode.dark; // Update global theme state
+                          },
+                          tooltip: 'Toggle Theme',
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // ==========================================
+            const SizedBox(height: 16),
             // Welcome Header
             Container(
               decoration: BoxDecoration(
@@ -884,8 +1106,8 @@ class HomeScreen extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Good Morning, Farmer!',
+                        Text(
+                          _t('Good Morning, Farmer!'),
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
@@ -894,7 +1116,7 @@ class HomeScreen extends StatelessWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Your crops are healthy today',
+                          _t('Your crops are healthy today'),
                           style: TextStyle(fontSize: 14, color: Colors.white70),
                         ),
                       ],
@@ -906,8 +1128,8 @@ class HomeScreen extends StatelessWidget {
             const SizedBox(height: 24),
 
             // Quick Stats
-            const Text(
-              'Quick Stats',
+            Text(
+              _t('Quick Stats'),
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
@@ -916,7 +1138,7 @@ class HomeScreen extends StatelessWidget {
                 Expanded(
                   child: _StatCard(
                     icon: Icons.grass,
-                    label: 'Total Crops',
+                    label: _t('Total Crops'),
                     value: totalCrops.toString(),
                     color: Colors.green,
                   ),
@@ -925,7 +1147,7 @@ class HomeScreen extends StatelessWidget {
                 Expanded(
                   child: _StatCard(
                     icon: Icons.warning,
-                    label: 'Diseases',
+                    label: _t('Diseases'),
                     value: diseaseCount.toString(),
                     color: Colors.orange,
                   ),
@@ -934,7 +1156,7 @@ class HomeScreen extends StatelessWidget {
                 Expanded(
                   child: _StatCard(
                     icon: Icons.check_circle,
-                    label: 'Healthy',
+                    label: _t('Healthy'),
                     value: healthyCount.toString(),
                     color: Colors.green,
                   ),
@@ -965,8 +1187,8 @@ class HomeScreen extends StatelessWidget {
                 children: [
                   Icon(Icons.camera_alt, size: 60, color: Colors.white),
                   const SizedBox(height: 12),
-                  const Text(
-                    'Upload Crop Photo',
+                  Text(
+                    _t('Upload Crop Photo'),
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -975,7 +1197,7 @@ class HomeScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Scan your crops for disease detection',
+                    _t('Scan your crops for disease detection'),
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 12, color: Colors.white70),
                   ),
@@ -992,13 +1214,13 @@ class HomeScreen extends StatelessWidget {
                         ),
                       ),
                       onPressed: onUpload,
-                      child: const Row(
+                      child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(Icons.upload),
                           SizedBox(width: 8),
                           Text(
-                            'Choose Image',
+                            _t('Choose Image'),
                             style: TextStyle(fontWeight: FontWeight.bold),
                           ),
                         ],
@@ -1011,29 +1233,29 @@ class HomeScreen extends StatelessWidget {
             const SizedBox(height: 24),
 
             // Features Section
-            const Text(
-              'Features',
+            Text(
+              _t('Features'),
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             _FeatureCard(
               icon: Icons.map,
-              title: 'Disease Heatmap',
-              description: 'View diseases in your region',
+              title: _t('Disease Heatmap'),
+              description: _t('View diseases in your region'),
               onTap: () => onNavigate(1),
             ),
             const SizedBox(height: 10),
             _FeatureCard(
               icon: Icons.bar_chart,
-              title: 'Analytics',
-              description: 'Check historical crop data',
+              title: _t('Analytics'),
+              description: _t('Check historical crop data'),
               onTap: () => onNavigate(2),
             ),
             const SizedBox(height: 10),
             _FeatureCard(
               icon: Icons.chat,
-              title: 'AI Chatbot',
-              description: 'Ask farming questions',
+              title: _t('AI Chatbot'),
+              description: _t('Ask farming questions'),
               onTap: () => onNavigate(3),
             ),
             const SizedBox(height: 24),
@@ -1053,8 +1275,8 @@ class HomeScreen extends StatelessWidget {
                     children: [
                       Icon(Icons.lightbulb, color: Colors.amber[700]),
                       const SizedBox(width: 8),
-                      const Text(
-                        'Daily Tip',
+                      Text(
+                        _t('Daily Tip'),
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.bold,
@@ -1064,7 +1286,7 @@ class HomeScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Water your crops early in the morning to reduce disease risk and maximize water absorption.',
+                    _t('Water your crops early in the morning to reduce disease risk and maximize water absorption.'),
                     style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                   ),
                 ],
@@ -1074,6 +1296,8 @@ class HomeScreen extends StatelessWidget {
           ],
         ),
       ),
+    );
+      },
     );
   }
 }
@@ -1252,7 +1476,10 @@ class AnalysisScreen extends StatelessWidget {
                         ),
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
                         decoration: BoxDecoration(
                           color: _getSeverityColor().withOpacity(0.1),
                           borderRadius: BorderRadius.circular(20),
@@ -1260,7 +1487,11 @@ class AnalysisScreen extends StatelessWidget {
                         ),
                         child: Row(
                           children: [
-                            Icon(Icons.circle, color: _getSeverityColor(), size: 12),
+                            Icon(
+                              Icons.circle,
+                              color: _getSeverityColor(),
+                              size: 12,
+                            ),
                             const SizedBox(width: 6),
                             Text(
                               disease.severity.toUpperCase(),
@@ -1276,9 +1507,15 @@ class AnalysisScreen extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  
+
                   // Confidence Bar
-                  const Text('AI Confidence', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                  const Text(
+                    'AI Confidence',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey,
+                    ),
+                  ),
                   const SizedBox(height: 6),
                   Row(
                     children: [
@@ -1288,7 +1525,11 @@ class AnalysisScreen extends StatelessWidget {
                           child: LinearProgressIndicator(
                             value: disease.confidence,
                             backgroundColor: Colors.grey[200],
-                            color: disease.confidence > 0.8 ? Colors.green : (disease.confidence > 0.5 ? Colors.amber : Colors.red),
+                            color: disease.confidence > 0.8
+                                ? Colors.green
+                                : (disease.confidence > 0.5
+                                      ? Colors.amber
+                                      : Colors.red),
                             minHeight: 10,
                           ),
                         ),
@@ -1303,29 +1544,68 @@ class AnalysisScreen extends StatelessWidget {
                   const SizedBox(height: 24),
 
                   // Treatment Information
-                  const Text('Treatment Plan', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const Text(
+                    'Treatment Plan',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 12),
-                  _TreatmentCard(icon: Icons.medical_services, title: 'Treatment', description: disease.treatment, color: Colors.blue),
+                  _TreatmentCard(
+                    icon: Icons.medical_services,
+                    title: 'Treatment',
+                    description: disease.treatment,
+                    color: Colors.blue,
+                  ),
                   const SizedBox(height: 10),
-                  _TreatmentCard(icon: Icons.science, title: 'Chemical Solution', description: disease.chemical, color: Colors.purple),
+                  _TreatmentCard(
+                    icon: Icons.science,
+                    title: 'Chemical Solution',
+                    description: disease.chemical,
+                    color: Colors.purple,
+                  ),
                   const SizedBox(height: 10),
-                  _TreatmentCard(icon: Icons.scale, title: 'Dosage', description: disease.dosage, color: Colors.green),
+                  _TreatmentCard(
+                    icon: Icons.scale,
+                    title: 'Dosage',
+                    description: disease.dosage,
+                    color: Colors.green,
+                  ),
                   const SizedBox(height: 10),
-                  _TreatmentCard(icon: Icons.schedule, title: 'Application Timing', description: disease.timing, color: Colors.orange),
+                  _TreatmentCard(
+                    icon: Icons.schedule,
+                    title: 'Application Timing',
+                    description: disease.timing,
+                    color: Colors.orange,
+                  ),
                   const SizedBox(height: 24),
 
                   // Why this diagnosis?
                   if (disease.symptoms.isNotEmpty) ...[
-                    const Text('Why this diagnosis?', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const Text(
+                      'Why this diagnosis?',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
-                      children: disease.symptoms.map((symptom) => Chip(
-                        label: Text(symptom, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                        backgroundColor: Colors.red[50],
-                        side: BorderSide(color: Colors.red[200]!),
-                      )).toList(),
+                      children: disease.symptoms
+                          .map(
+                            (symptom) => Chip(
+                              label: Text(
+                                symptom,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              backgroundColor: Colors.red[50],
+                              side: BorderSide(color: Colors.red[200]!),
+                            ),
+                          )
+                          .toList(),
                     ),
                     const SizedBox(height: 24),
                   ],
@@ -1341,10 +1621,27 @@ class AnalysisScreen extends StatelessWidget {
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 28),
+                        const Icon(
+                          Icons.warning_amber_rounded,
+                          color: Colors.orange,
+                          size: 28,
+                        ),
                         const SizedBox(width: 12),
-                        const Text('Spread Risk: ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                        Text(disease.spreadRisk, style: const TextStyle(fontSize: 16, color: Colors.orange, fontWeight: FontWeight.bold)),
+                        const Text(
+                          'Spread Risk: ',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        Text(
+                          disease.spreadRisk,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            color: Colors.orange,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -1352,8 +1649,14 @@ class AnalysisScreen extends StatelessWidget {
 
                   // Next Steps
                   if (disease.nextSteps.isNotEmpty) ...[
-                    const Text('Next Steps', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                     const SizedBox(height: 12),
+                    const Text(
+                      'Next Steps',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -1363,24 +1666,40 @@ class AnalysisScreen extends StatelessWidget {
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: disease.nextSteps.map((step) => Padding(
-                          padding: const EdgeInsets.only(bottom: 8.0),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Icon(Icons.check_circle, color: Colors.green, size: 20),
-                              const SizedBox(width: 8),
-                              Expanded(child: Text(step, style: const TextStyle(fontSize: 14))),
-                            ],
-                          ),
-                        )).toList(),
+                        children: disease.nextSteps
+                            .map(
+                              (step) => Padding(
+                                padding: const EdgeInsets.only(bottom: 8.0),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Icon(
+                                      Icons.check_circle,
+                                      color: Colors.green,
+                                      size: 20,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        step,
+                                        style: const TextStyle(fontSize: 14),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                            .toList(),
                       ),
                     ),
                     const SizedBox(height: 24),
                   ],
 
                   // Prevention Tips
-                  const Text('Prevention', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const Text(
+                    'Prevention',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 8),
                   Container(
                     width: double.infinity,
@@ -1395,7 +1714,12 @@ class AnalysisScreen extends StatelessWidget {
                       children: [
                         const Icon(Icons.shield, color: Colors.blue, size: 28),
                         const SizedBox(width: 12),
-                        Expanded(child: Text(disease.prevention, style: const TextStyle(fontSize: 14))),
+                        Expanded(
+                          child: Text(
+                            disease.prevention,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -1409,13 +1733,27 @@ class AnalysisScreen extends StatelessWidget {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.green[600],
                         foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                       onPressed: () {
-                        Navigator.push(context, MaterialPageRoute(builder: (context) => ChatScreen(messages: [], onSend: onChat)));
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                ChatScreen(messages: [], onSend: onChat),
+                          ),
+                        );
                       },
                       icon: const Icon(Icons.chat),
-                      label: const Text('Ask AI Chatbot', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      label: const Text(
+                        'Ask AI Chatbot',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -1427,20 +1765,33 @@ class AnalysisScreen extends StatelessWidget {
                     child: OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
                         side: BorderSide(color: Colors.green[600]!, width: 2),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                       onPressed: () => Navigator.pop(context),
                       icon: Icon(Icons.arrow_back, color: Colors.green[600]),
-                      label: Text('Go Back', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green[600])),
+                      label: Text(
+                        'Go Back',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green[600],
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 24),
-                  
+
                   // Disclaimer
                   const Center(
                     child: Text(
                       'AI-based prediction. Verify with local expert.',
-                      style: TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                        fontStyle: FontStyle.italic,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 30),
