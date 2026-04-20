@@ -20,7 +20,7 @@ export default function PestHeatmap() {
 
   const { isLoaded } = useJsApiLoader({
     id: "google-map-script",
-    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "AIzaSyBynQ_Lq-wSBqUPPHIdsl80uec-U0OybS8",
+    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "[GCP_KEY]",
   });
 
   
