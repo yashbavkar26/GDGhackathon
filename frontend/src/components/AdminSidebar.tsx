@@ -1,4 +1,4 @@
-import { LayoutDashboard, Camera, Map, Cloud, Pill, Smartphone, Bug, BarChart3 } from "lucide-react";
+import { LayoutDashboard, Camera, Map, Cloud, Pill, BarChart3 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import logo from "@/assets/logo.png";
@@ -23,13 +23,6 @@ const adminItems = [
   { title: "Weather Forecast", url: "/weather-forecast", icon: Cloud },
   { title: "Treatments", url: "/treatments", icon: Pill },
   { title: "Reports", url: "/reports", icon: BarChart3 },
-];
-
-const mobileItems = [
-  { title: "Farmer App Home", url: "/app/home", icon: Smartphone },
-  { title: "Scan Crop", url: "/app/scan", icon: Camera },
-  { title: "My Reports", url: "/app/reports", icon: Bug },
-  { title: "Alerts", url: "/app/alerts", icon: Cloud },
 ];
 
 export function AdminSidebar() {
@@ -57,23 +50,6 @@ export function AdminSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {adminItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                    <NavLink to={item.url} end className="hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary font-medium">
-                      <item.icon className="mr-2 h-4 w-4" />
-                      {!collapsed && <span>{item.title}</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupLabel>Mobile App Preview</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {mobileItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild isActive={isActive(item.url)}>
                     <NavLink to={item.url} end className="hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary font-medium">

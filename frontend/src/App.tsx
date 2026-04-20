@@ -9,10 +9,6 @@ import PestHeatmap from "./pages/PestHeatmap.tsx";
 import WeatherForecast from "./pages/WeatherForecast.tsx";
 import Treatments from "./pages/Treatments.tsx";
 import Reports from "./pages/Reports.tsx";
-import AppHome from "./pages/AppHome.tsx";
-import AppScan from "./pages/AppScan.tsx";
-import AppReports from "./pages/AppReports.tsx";
-import AppAlerts from "./pages/AppAlerts.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
@@ -30,10 +26,6 @@ const App = () => (
           <Route path="/weather-forecast" element={<WeatherForecast />} />
           <Route path="/treatments" element={<Treatments />} />
           <Route path="/reports" element={<Reports />} />
-          <Route path="/app/home" element={<AppHome />} />
-          <Route path="/app/scan" element={<AppScan />} />
-          <Route path="/app/reports" element={<AppReports />} />
-          <Route path="/app/alerts" element={<AppAlerts />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
